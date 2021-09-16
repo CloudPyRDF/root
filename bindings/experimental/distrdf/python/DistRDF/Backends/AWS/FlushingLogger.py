@@ -16,4 +16,3 @@ class FlushingLogger:
             return flushed_method
         else:
             return method
-

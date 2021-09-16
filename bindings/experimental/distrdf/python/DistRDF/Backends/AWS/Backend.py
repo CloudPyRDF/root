@@ -15,8 +15,8 @@ import cloudpickle as pickle
 from DistRDF import DataFrame
 from DistRDF import Node
 from DistRDF.Backends import Base
-from .flushing_logger import FlushingLogger
 
+from .FlushingLogger import FlushingLogger
 
 lambda_await_thread_stop = False
 
@@ -55,7 +55,7 @@ class AWS(Base.BaseBackend):
         #    `optimize_npartitions` function
         # 3. Set `npartitions` to 2
         npartitions = kwargs.pop("npartitions", self.npartitions)
-        headnode = Node.HeadNode(*args)
+        headnode = Node.HeadNode(npartitions, *args)
         return DataFrame.RDataFrame(headnode, self)
 
     def ProcessAndMerge(self, ranges, mapper, reducer):
@@ -86,7 +86,7 @@ class AWS(Base.BaseBackend):
         self.logger.info(f'Before lambdas invoke. Number of lambdas: {len(ranges)}')
 
         processing_bucket = ssm_client.get_parameter(Name='processing_bucket')['Parameter']['Value']
-        
+
         s3_resource.Bucket(processing_bucket).objects.all().delete()
 
         invoke_begin = time.time()
@@ -98,7 +98,10 @@ class AWS(Base.BaseBackend):
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(ranges)) as executor:
             executor.submit(AWS.wait_for_all_lambdas, s3_client, processing_bucket, len(ranges), self.logger)
             futures = [
-                executor.submit(AWS.invoke_root_lambda, root_range, pickled_mapper, self.region, self.logger, certs, pickled_headers)
+                executor.submit(AWS.invoke_root_lambda,
+                                root_range, pickled_mapper,
+                                self.region, self.logger,
+                                certs, pickled_headers)
                 for root_range in ranges]
             call_results = [future.result() for future in futures]
             if not all(call_results):
@@ -116,8 +119,9 @@ class AWS(Base.BaseBackend):
         AWS.remove_all_tmp_root_files(tmp_files_directory)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(filenames)) as executor:
-            futures = [executor.submit(AWS.get_from_s3, filename, self.region, processing_bucket, tmp_files_directory)
-                       for filename in filenames]
+            futures = [executor.submit(
+                AWS.get_from_s3, filename, self.region, processing_bucket, tmp_files_directory)
+                for filename in filenames]
             files = [future.result() for future in futures]
 
         reduce_begin = time.time()
@@ -153,8 +157,6 @@ class AWS(Base.BaseBackend):
 
         return reduction_result
 
-    
-    
     def distribute_files(self, includes_list):
         pass
 
@@ -297,9 +299,7 @@ class AWS(Base.BaseBackend):
         """
         pass
 
-
     def add_header(self, path: str):
         with open(path, 'r') as f:
             contents = f.read()
             self.paths.append((path, contents))
-
