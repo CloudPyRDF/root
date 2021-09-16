@@ -55,7 +55,7 @@ class AWS(Base.BaseBackend):
         #    `optimize_npartitions` function
         # 3. Set `npartitions` to 2
         headnode = Node.HeadNode(*args)
-        return DataFrame.RDataFrame(headnode, self)
+        return DataFrame.RDataFrame(headnode, self, **kwargs)
 
     def ProcessAndMerge(self, ranges, mapper, reducer):
         """
