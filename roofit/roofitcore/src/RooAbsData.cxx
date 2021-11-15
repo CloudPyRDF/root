@@ -23,6 +23,58 @@ RooAbsData is the common abstract base class for binned and unbinned
 datasets. The abstract interface defines plotting and tabulating entry
 points for its contents and provides an iterator over its elements
 (bins for binned data sets, data points for unbinned datasets).
+
+### Storing global observables in RooFit datasets
+
+RooFit groups model variables into *observables* and *parameters*, depending on
+if their values are stored in the dataset. For fits with parameter
+constraints, there is a third kind of variables, called *global observables*.
+These represent the results of auxiliary measurements that constrain the
+nuisance parameters. In the RooFit implementation, a likelihood is generally
+the sum of two terms:
+- the likelihood of the data given the parameters, where the normalization set
+  is the set of observables (implemented by RooNLLVar)
+- the constraint term, where the normalization set is the set of *global
+observables* (implemented by RooConstraintSum)
+
+Before this release, the global observable values were always taken from the
+model/pdf. With this release, a mechanism is added to store a snapshot of
+global observables in any RooDataSet or RooDataHist. For toy studies where the
+global observables assume a different values for each toy, the bookkeeping of
+the set of global observables and in particular their values is much easier
+with this change.
+
+Usage example for a model with global observables `g1` and `g2`:
+```
+auto data = model.generate(x, 1000); // data has only the single observables x
+data->setGlobalObservables(g1, g2); // now, data also stores a snapshot of g1 and g2
+
+// If you fit the model to the data, the global observables and their values
+// are taken from the dataset:
+model.fitTo(*data);
+
+// You can still define the set of global observables yourself, but the values
+// will be takes from the dataset if available:
+model.fitTo(*data, GlobalObservables(g1, g2));
+
+// To force `fitTo` to take the global observable values from the model even
+// though they are in the dataset, you can use the new `GlobalObservablesSource`
+// command argument:
+model.fitTo(*data, GlobalObservables(g1, g2), GlobalObservablesSource("model"));
+// The only other allowed value for `GlobalObservablesSource` is "data", which
+// corresponds to the new default behavior explained above.
+```
+
+In case you create a RooFit dataset directly by calling its constructor, you
+can also pass the global observables in a command argument instead of calling
+RooAbsData::setGlobalObservables() later:
+```
+RooDataSet data{"dataset", "dataset", x, RooFit::GlobalObservables(g1, g2)};
+```
+
+To access the set of global observables stored in a RooAbsData, call
+RooAbsData::getGlobalObservables(). It returns a `nullptr` if no global
+observable snapshots are stored in the dataset.
 **/
 
 #include "RooAbsData.h"
@@ -206,6 +258,8 @@ RooAbsData::RooAbsData(const RooAbsData& other, const char* newname) :
     storageType = other.storageType;
   }
 
+  copyGlobalObservables(other);
+
   RooTrace::create(this) ;
 }
 
@@ -245,8 +299,22 @@ RooAbsData& RooAbsData::operator=(const RooAbsData& other) {
     storageType = other.storageType;
   }
 
+  copyGlobalObservables(other);
+
   return *this;
 }
+
+
+void RooAbsData::copyGlobalObservables(const RooAbsData& other) {
+  if (other._globalObservables) {
+    if(_globalObservables == nullptr) _globalObservables = std::make_unique<RooArgSet>();
+    else _globalObservables->clear();
+    other._globalObservables->snapshot(*_globalObservables);
+  } else {
+    _globalObservables.reset(nullptr);
+  }
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Destructor
@@ -275,10 +343,9 @@ RooAbsData::~RooAbsData()
 
 void RooAbsData::convertToVectorStore()
 {
-   if (storageType == RooAbsData::Tree) {
-      RooVectorDataStore *newStore = new RooVectorDataStore(*(RooTreeDataStore *)_dstore, _vars, GetName());
-      delete _dstore;
-      _dstore = newStore;
+   if (auto treeStore = dynamic_cast<RooTreeDataStore*>(_dstore)) {
+      _dstore = new RooVectorDataStore(*treeStore, _vars, GetName());
+      delete treeStore;
       storageType = RooAbsData::Vector;
    }
 }
@@ -397,8 +464,8 @@ RooAbsData* RooAbsData::reduce(const RooCmdArg& arg1,const RooCmdArg& arg2,const
 
   // Process & check varargs
   pc.process(arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8) ;
-  if (!pc.ok(kTRUE)) {
-    return 0 ;
+  if (!pc.ok(true)) {
+    return nullptr;
   }
 
   // Extract values from named arguments
@@ -442,15 +509,12 @@ RooAbsData* RooAbsData::reduce(const RooCmdArg& arg1,const RooCmdArg& arg2,const
 
   }
 
-  if (!ret) return 0 ;
+  if (!ret) return nullptr;
 
-  if (name) {
-    ret->SetName(name) ;
-  }
-  if (title) {
-    ret->SetTitle(title) ;
-  }
+  if (name) ret->SetName(name) ;
+  if (title) ret->SetTitle(title) ;
 
+  ret->copyGlobalObservables(*this);
   return ret ;
 }
 
@@ -463,7 +527,9 @@ RooAbsData* RooAbsData::reduce(const RooCmdArg& arg1,const RooCmdArg& arg2,const
 RooAbsData* RooAbsData::reduce(const char* cut)
 {
   RooFormulaVar cutVar(cut,cut,*get()) ;
-  return reduceEng(*get(),&cutVar,0,0,std::numeric_limits<std::size_t>::max(),kFALSE) ;
+  RooAbsData* ret = reduceEng(*get(),&cutVar,0,0,std::numeric_limits<std::size_t>::max(),kFALSE) ;
+  ret->copyGlobalObservables(*this);
+  return ret;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -473,7 +539,9 @@ RooAbsData* RooAbsData::reduce(const char* cut)
 
 RooAbsData* RooAbsData::reduce(const RooFormulaVar& cutVar)
 {
-  return reduceEng(*get(),&cutVar,0,0,std::numeric_limits<std::size_t>::max(),kFALSE) ;
+  RooAbsData* ret = reduceEng(*get(),&cutVar,0,0,std::numeric_limits<std::size_t>::max(),kFALSE) ;
+  ret->copyGlobalObservables(*this);
+  return ret;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -496,11 +564,15 @@ RooAbsData* RooAbsData::reduce(const RooArgSet& varSubset, const char* cut)
     }
   }
 
+  RooAbsData* ret = nullptr;
   if (cut && strlen(cut)>0) {
     RooFormulaVar cutVar(cut, cut, *get(), false);
-    return reduceEng(varSubset2,&cutVar,0,0,std::numeric_limits<std::size_t>::max(),kFALSE) ;
+    ret = reduceEng(varSubset2,&cutVar,0,0,std::numeric_limits<std::size_t>::max(),false);
+  } else {
+    ret = reduceEng(varSubset2,0,0,0,std::numeric_limits<std::size_t>::max(),false);
   }
-  return reduceEng(varSubset2,0,0,0,std::numeric_limits<std::size_t>::max(),kFALSE) ;
+  ret->copyGlobalObservables(*this);
+  return ret;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -514,18 +586,17 @@ RooAbsData* RooAbsData::reduce(const RooArgSet& varSubset, const RooFormulaVar& 
 {
   // Make sure varSubset doesn't contain any variable not in this dataset
   RooArgSet varSubset2(varSubset) ;
-  TIterator* iter = varSubset.createIterator() ;
-  RooAbsArg* arg ;
-  while((arg=(RooAbsArg*)iter->Next())) {
+  for(RooAbsArg * arg : varSubset) {
     if (!_vars.find(arg->GetName())) {
       coutW(InputArguments) << "RooAbsData::reduce(" << GetName() << ") WARNING: variable "
              << arg->GetName() << " not in dataset, ignored" << endl ;
       varSubset2.remove(*arg) ;
     }
   }
-  delete iter ;
 
-  return reduceEng(varSubset2,&cutVar,0,0,std::numeric_limits<std::size_t>::max(),kFALSE) ;
+  RooAbsData* ret = reduceEng(varSubset2,&cutVar,0,0,std::numeric_limits<std::size_t>::max(),kFALSE) ;
+  ret->copyGlobalObservables(*this);
+  return ret;
 }
 
 
@@ -2356,4 +2427,39 @@ void RooAbsData::RecursiveRemove(TObject *obj)
       iter.second = nullptr;
     }
   }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+/// Sets the global observables stored in this data. A snapshot of the
+/// observables will be saved.
+/// \param[in] globalObservables The set of global observables to take a snapshot of.
+
+void RooAbsData::setGlobalObservables(RooArgSet const& globalObservables) {
+  if(_globalObservables == nullptr) _globalObservables = std::make_unique<RooArgSet>();
+  else _globalObservables->clear();
+  globalObservables.snapshot(*_globalObservables);
+  for(auto * arg : *_globalObservables) {
+    arg->setAttribute("global",true);
+    // Global observables are also always constant in fits
+    if(auto lval = dynamic_cast<RooAbsRealLValue*>(arg)) lval->setConstant(true);
+    if(auto lval = dynamic_cast<RooAbsCategoryLValue*>(arg)) lval->setConstant(true);
+  }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+/// Return sum of squared weights of this data.
+
+double RooAbsData::sumEntriesW2() const {
+  const RooSpan<const double> eventWeights = getWeightBatch(0, numEntries(), /*sumW2=*/true);
+  if (eventWeights.empty()) {
+    return numEntries() * weightSquared();
+  }
+
+  ROOT::Math::KahanSum<double, 4u> kahanWeight;
+  for (std::size_t i = 0; i < eventWeights.size(); ++i) {
+    kahanWeight.AddIndexed(eventWeights[i], i);
+  }
+  return kahanWeight.Sum();
 }

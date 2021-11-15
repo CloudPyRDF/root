@@ -52,7 +52,7 @@ private:
             return fSealedPage.fBuffer != nullptr;
          }
          void AllocateSealedPageBuf() {
-            fBuf = std::make_unique<unsigned char[]>(fPage.GetSize());
+            fBuf = std::make_unique<unsigned char[]>(fPage.GetNBytes());
          }
       };
    public:
@@ -111,7 +111,7 @@ protected:
    void CreateImpl(const RNTupleModel &model) final;
    RClusterDescriptor::RLocator CommitPageImpl(ColumnHandle_t columnHandle, const RPage &page) final;
    RClusterDescriptor::RLocator CommitSealedPageImpl(DescriptorId_t columnId, const RSealedPage &sealedPage) final;
-   RClusterDescriptor::RLocator CommitClusterImpl(NTupleSize_t nEntries) final;
+   std::uint64_t CommitClusterImpl(NTupleSize_t nEntries) final;
    void CommitDatasetImpl() final;
 
 public:
@@ -122,7 +122,7 @@ public:
    RPageSinkBuf& operator=(RPageSinkBuf&&) = default;
    virtual ~RPageSinkBuf() = default;
 
-   RPage ReservePage(ColumnHandle_t columnHandle, std::size_t nElements = 0) final;
+   RPage ReservePage(ColumnHandle_t columnHandle, std::size_t nElements) final;
    void ReleasePage(RPage &page) final;
 
    RNTupleMetrics &GetMetrics() final { return fMetrics; }

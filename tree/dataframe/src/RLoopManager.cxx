@@ -9,6 +9,7 @@
 #include "RConfigure.h" // R__USE_IMT
 #include "ROOT/RDataSource.hxx"
 #include "ROOT/RDF/GraphNode.hxx"
+#include "ROOT/InternalTreeUtils.hxx" // GetTreeFullPaths
 #include "ROOT/RDF/RActionBase.hxx"
 #include "ROOT/RDF/RFilterBase.hxx"
 #include "ROOT/RDF/RLoopManager.hxx"
@@ -337,20 +338,21 @@ RLoopManager::RLoopManager(TTree *tree, const ColumnNames_t &defaultBranches)
    : fTree(std::shared_ptr<TTree>(tree, [](TTree *) {})), fDefaultColumns(defaultBranches),
      fNSlots(RDFInternal::GetNSlots()),
      fLoopType(ROOT::IsImplicitMTEnabled() ? ELoopType::kROOTFilesMT : ELoopType::kROOTFiles),
-     fDataBlockNotifier(fNSlots)
+     fNewSampleNotifier(fNSlots), fSampleInfos(fNSlots)
 {
 }
 
 RLoopManager::RLoopManager(ULong64_t nEmptyEntries)
    : fNEmptyEntries(nEmptyEntries), fNSlots(RDFInternal::GetNSlots()),
-     fLoopType(ROOT::IsImplicitMTEnabled() ? ELoopType::kNoFilesMT : ELoopType::kNoFiles), fDataBlockNotifier(fNSlots)
+     fLoopType(ROOT::IsImplicitMTEnabled() ? ELoopType::kNoFilesMT : ELoopType::kNoFiles), fNewSampleNotifier(fNSlots),
+     fSampleInfos(fNSlots)
 {
 }
 
 RLoopManager::RLoopManager(std::unique_ptr<RDataSource> ds, const ColumnNames_t &defaultBranches)
    : fDefaultColumns(defaultBranches), fNSlots(RDFInternal::GetNSlots()),
      fLoopType(ROOT::IsImplicitMTEnabled() ? ELoopType::kDataSourceMT : ELoopType::kDataSource),
-     fDataSource(std::move(ds)), fDataBlockNotifier(fNSlots)
+     fDataSource(std::move(ds)), fNewSampleNotifier(fNSlots), fSampleInfos(fNSlots)
 {
    fDataSource->SetNSlots(fNSlots);
 }
@@ -391,6 +393,7 @@ void RLoopManager::RunEmptySourceMT()
       InitNodeSlots(nullptr, slot);
       R__LOG_INFO(RDFLogChannel()) << LogRangeProcessing({"an empty source", range.first, range.second, slot});
       try {
+         UpdateSampleInfo(slot, range);
          for (auto currEntry = range.first; currEntry < range.second; ++currEntry) {
             RunAndCheckFilters(slot, currEntry);
          }
@@ -414,6 +417,7 @@ void RLoopManager::RunEmptySource()
    R__LOG_INFO(RDFLogChannel()) << LogRangeProcessing({"an empty source", 0, fNEmptyEntries, 0u});
    RCallCleanUpTask cleanup(*this);
    try {
+      UpdateSampleInfo(/*slot*/0, {0, fNEmptyEntries});
       for (ULong64_t currEntry = 0; currEntry < fNEmptyEntries && fNStopsReceived < fNChildren; ++currEntry) {
          RunAndCheckFilters(0, currEntry);
       }
@@ -445,6 +449,9 @@ void RLoopManager::RunTreeProcessorMT()
       try {
          // recursive call to check filters and conditionally execute actions
          while (r.Next()) {
+            if (fNewSampleNotifier.CheckFlag(slot)) {
+               UpdateSampleInfo(slot, r);
+            }
             RunAndCheckFilters(slot, count++);
          }
       } catch (...) {
@@ -476,6 +483,9 @@ void RLoopManager::RunTreeReader()
    // in the non-MT case processing can be stopped early by ranges, hence the check on fNStopsReceived
    try {
       while (r.Next() && fNStopsReceived < fNChildren) {
+         if (fNewSampleNotifier.CheckFlag(0)) {
+            UpdateSampleInfo(/*slot*/0, r);
+         }
          RunAndCheckFilters(0, r.GetCurrentEntry());
       }
    } catch (...) {
@@ -492,7 +502,7 @@ void RLoopManager::RunTreeReader()
 /// Run event loop over data accessed through a DataSource, in sequence.
 void RLoopManager::RunDataSource()
 {
-   R__ASSERT(fDataSource != nullptr);
+   assert(fDataSource != nullptr);
    fDataSource->Initialise();
    auto ranges = fDataSource->GetEntryRanges();
    while (!ranges.empty() && fNStopsReceived < fNChildren) {
@@ -524,7 +534,7 @@ void RLoopManager::RunDataSource()
 void RLoopManager::RunDataSourceMT()
 {
 #ifdef R__USE_IMT
-   R__ASSERT(fDataSource != nullptr);
+   assert(fDataSource != nullptr);
    RSlotStack slotStack(fNSlots);
    ROOT::TThreadExecutor pool;
 
@@ -566,11 +576,11 @@ void RLoopManager::RunDataSourceMT()
 void RLoopManager::RunAndCheckFilters(unsigned int slot, Long64_t entry)
 {
    // data-block callbacks run before the rest of the graph
-   if (fDataBlockNotifier.CheckFlag(slot)) {
-      for (auto &callback : fDataBlockCallbacks) {
-         callback(slot);
+   if (fNewSampleNotifier.CheckFlag(slot)) {
+      for (auto &callback : fSampleCallbacks) {
+         callback(slot, fSampleInfos[slot]);
       }
-      fDataBlockNotifier.UnsetFlag(slot);
+      fNewSampleNotifier.UnsetFlag(slot);
    }
 
    for (auto &actionPtr : fBookedActions)
@@ -586,7 +596,7 @@ void RLoopManager::RunAndCheckFilters(unsigned int slot, Long64_t entry)
 /// calls their `InitSlot` method, to get them ready for running a task.
 void RLoopManager::InitNodeSlots(TTreeReader *r, unsigned int slot)
 {
-   SetupDataBlockCallbacks(r, slot);
+   SetupSampleCallbacks(r, slot);
    for (auto &ptr : fBookedActions)
       ptr->InitSlot(r, slot);
    for (auto &ptr : fBookedFilters)
@@ -595,18 +605,41 @@ void RLoopManager::InitNodeSlots(TTreeReader *r, unsigned int slot)
       callback(slot);
 }
 
-void RLoopManager::SetupDataBlockCallbacks(TTreeReader *r, unsigned int slot) {
+void RLoopManager::SetupSampleCallbacks(TTreeReader *r, unsigned int slot) {
    if (r != nullptr) {
       // we need to set a notifier so that we run the callbacks every time we switch to a new TTree
       // `PrependLink` inserts this notifier into the TTree/TChain's linked list of notifiers
-      fDataBlockNotifier.GetChainNotifyLink(slot).PrependLink(*r->GetTree());
+      fNewSampleNotifier.GetChainNotifyLink(slot).PrependLink(*r->GetTree());
    }
    // Whatever the data source, initially set the "new data block" flag:
    // - for TChains, this ensures that we don't skip the first data block because
    //   the correct tree is already loaded
    // - for RDataSources and empty sources, which currently don't have data blocks, this
    //   ensures that we run once per task
-   fDataBlockNotifier.SetFlag(slot);
+   fNewSampleNotifier.SetFlag(slot);
+}
+
+void RLoopManager::UpdateSampleInfo(unsigned int slot, const std::pair<ULong64_t, ULong64_t> &range) {
+   fSampleInfos[slot] = RSampleInfo(
+      "Empty source, range: {" + std::to_string(range.first) + ", " + std::to_string(range.second) + "}", range);
+}
+
+void RLoopManager::UpdateSampleInfo(unsigned int slot, TTreeReader &r) {
+   // one GetTree to retrieve the TChain, another to retrieve the underlying TTree
+   auto *tree = r.GetTree()->GetTree();
+   R__ASSERT(tree != nullptr);
+   const std::string treename = ROOT::Internal::TreeUtils::GetTreeFullPaths(*tree)[0];
+   auto *file = tree->GetCurrentFile();
+   const std::string fname = file != nullptr ? file->GetName() : "#inmemorytree#";
+
+
+   std::pair<Long64_t, Long64_t> range = r.GetEntriesRange();
+   R__ASSERT(range.first >= 0);
+   if (range.second == -1) {
+      range.second = tree->GetEntries(); // convert '-1', i.e. 'until the end', to the actual entry number
+   }
+
+   fSampleInfos[slot] = RSampleInfo(fname + "/" + treename, range);
 }
 
 /// Initialize all nodes of the functional graph before running the event loop.
@@ -646,14 +679,14 @@ void RLoopManager::CleanUpNodes()
 
    fCallbacks.clear();
    fCallbacksOnce.clear();
-   fDataBlockCallbacks.clear();
+   fSampleCallbacks.clear();
 }
 
 /// Perform clean-up operations. To be called at the end of each task execution.
 void RLoopManager::CleanUpTask(TTreeReader *r, unsigned int slot)
 {
    if (r != nullptr)
-      fDataBlockNotifier.GetChainNotifyLink(slot).RemoveLink(*r->GetTree());
+      fNewSampleNotifier.GetChainNotifyLink(slot).RemoveLink(*r->GetTree());
    for (auto &ptr : fBookedActions)
       ptr->FinalizeSlot(slot);
    for (auto &ptr : fBookedFilters)
@@ -868,8 +901,8 @@ void RLoopManager::AddDSValuePtrs(const std::string &col, const std::vector<void
    fDSValuePtrMap[col] = ptrs;
 }
 
-void RLoopManager::AddDataBlockCallback(std::function<void(unsigned int)> &&callback)
+void RLoopManager::AddSampleCallback(SampleCallback_t &&callback)
 {
    if (callback)
-      fDataBlockCallbacks.emplace_back(std::move(callback));
+      fSampleCallbacks.emplace_back(std::move(callback));
 }

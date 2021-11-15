@@ -61,6 +61,10 @@ JSROOT.define(['d3', 'jquery', 'painter', 'jquery-ui'], (d3, $, jsrp) => {
          this.remove_bind = this.remove.bind(this);
       }
 
+      /** @summary Returns object with mouse event position when context menu was actiavted
+        * @desc Return object will have members "clientX" and "clientY" */
+      getEventPosition() { return this.show_evnt; }
+
       /** @summary Add menu item
         * @param {string} name - item name
         * @param {function} func - func called when item is selected */
@@ -555,6 +559,11 @@ JSROOT.define(['d3', 'jquery', 'painter', 'jquery-ui'], (d3, $, jsrp) => {
       /** @summary Fill context menu for axis
         * @private */
       addTAxisMenu(painter, faxis, kind) {
+         this.add("Divisions", () => this.input("Set Ndivisions", faxis.fNdivisions, "int").then(val => {
+            faxis.fNdivisions = val;
+            painter.interactiveRedraw("pad", `exec:SetNdivisions(${val})`, kind);
+         }));
+
          this.add("sub:Labels");
          this.addchk(faxis.TestBit(JSROOT.EAxisBits.kCenterLabels), "Center",
                arg => { faxis.InvertBit(JSROOT.EAxisBits.kCenterLabels); painter.interactiveRedraw("pad", `exec:CenterLabels(${arg})`, kind); });

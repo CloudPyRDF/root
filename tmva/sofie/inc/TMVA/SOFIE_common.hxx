@@ -25,6 +25,7 @@ enum class ETensorType{
 typedef std::int64_t int_t;
 
 std::string ConvertTypeToString(ETensorType type);
+ETensorType ConvertStringToType(std::string type);
 
 struct Dim{
    bool isParam = false;
@@ -46,6 +47,8 @@ struct TensorInfo{
 };
 
 std::size_t ConvertShapeToLength(std::vector<size_t> shape);
+
+std::string ConvertShapeToString(std::vector<size_t> shape);
 
 struct InitializedTensor{
    ETensorType fType;
@@ -81,7 +84,7 @@ struct InitializedTensor{
 };
 
 template <typename T>
-ETensorType GetTemplatedType(T obj){
+ETensorType GetTemplatedType(T /*obj*/ ){
    if (std::is_same<T, float>::value) return ETensorType::FLOAT;
    if (std::is_same<T, uint8_t>::value) return ETensorType::UNINT8;
    if (std::is_same<T, int8_t>::value) return ETensorType::INT8;

@@ -233,6 +233,19 @@ ROOT_STANDARD_LIBRARY_PACKAGE(RooFitCore
     RooFitLegacy/RooNameSet.h
     RooFitLegacy/RooSetPair.h
     RooFitLegacy/RooTreeData.h
+    TestStatistics/ConstantTermsOptimizer.h
+    TestStatistics/LikelihoodGradientWrapper.h
+    TestStatistics/LikelihoodWrapper.h
+    TestStatistics/LikelihoodSerial.h
+    TestStatistics/MinuitFcnGrad.h
+    TestStatistics/RooAbsL.h
+    TestStatistics/RooBinnedL.h
+    TestStatistics/RooSubsidiaryL.h
+    TestStatistics/RooSumL.h
+    TestStatistics/RooRealL.h
+    TestStatistics/RooUnbinnedL.h
+    TestStatistics/optional_parameter_types.h
+    TestStatistics/buildLikelihood.h
   SOURCES
     src/BidirMMapPipe.cxx
     src/BidirMMapPipe.h
@@ -404,7 +417,6 @@ ROOT_STANDARD_LIBRARY_PACKAGE(RooFitCore
     src/RooRealSumFunc.cxx
     src/RooRealSumPdf.cxx
     src/RooRealVar.cxx
-    src/RooRealVarSharedProperties.cxx
     src/RooRecursiveFraction.cxx
     src/RooRefCountList.cxx
     src/RooSTLRefCountList.cxx
@@ -443,12 +455,24 @@ ROOT_STANDARD_LIBRARY_PACKAGE(RooFitCore
     src/RooBinSamplingPdf.cxx
     src/RooBinWidthFunction.cxx
     src/RooFitLegacy/RooCatTypeLegacy.cxx
-    src/RooFitLegacy/RooCategorySharedProperties.cxx
     src/RooFitLegacy/RooHashTable.cxx
     src/RooFitLegacy/RooMinuit.cxx
     src/RooFitLegacy/RooMultiCatIter.cxx
     src/RooFitLegacy/RooNameSet.cxx
     src/RooFitLegacy/RooSetPair.cxx
+    src/TestStatistics/ConstantTermsOptimizer.cxx
+    src/TestStatistics/LikelihoodGradientWrapper.cxx
+    src/TestStatistics/LikelihoodWrapper.cxx
+    src/TestStatistics/LikelihoodSerial.cxx
+    src/TestStatistics/MinuitFcnGrad.cxx
+    src/TestStatistics/RooAbsL.cxx
+    src/TestStatistics/RooBinnedL.cxx
+    src/TestStatistics/RooSubsidiaryL.cxx
+    src/TestStatistics/RooSumL.cxx
+    src/TestStatistics/RooRealL.cxx
+    src/TestStatistics/RooUnbinnedL.cxx
+    src/TestStatistics/optional_parameter_types.cxx
+    src/TestStatistics/buildLikelihood.cxx
   DICTIONARY_OPTIONS
     "-writeEmptyRootPCM"
   LIBRARIES

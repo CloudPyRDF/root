@@ -18,7 +18,10 @@ ROOT_STANDARD_LIBRARY_PACKAGE(ROOTTMVASofie
    TMVA/ROperator.hxx
    TMVA/ROperator_Gemm.hxx
    TMVA/ROperator_Relu.hxx
+   TMVA/ROperator_Selu.hxx
+   TMVA/ROperator_Sigmoid.hxx
    TMVA/ROperator_Transpose.hxx
+   TMVA/ROperator_Conv.hxx
    TMVA/SOFIE_common.hxx
   SOURCES
     src/RModel.cxx
@@ -32,4 +35,7 @@ target_include_directories(ROOTTMVASofie PUBLIC
 set_target_properties(ROOTTMVASofie PROPERTIES
   POSITION_INDEPENDENT_CODE TRUE)
 
-ROOT_ADD_TEST_SUBDIRECTORY(test)
+# tests requires protobuf
+if (tmva-sofie)
+   ROOT_ADD_TEST_SUBDIRECTORY(test)
+endif()

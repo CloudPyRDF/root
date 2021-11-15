@@ -60,7 +60,7 @@ RDaosURI ParseDaosURI(std::string_view uri)
 }
 
 /// \brief Some random distribution/attribute key.  TODO: apply recommended schema, i.e.
-/// an OID for each cluster + a dkey for each page. 
+/// an OID for each cluster + a dkey for each page.
 static constexpr std::uint64_t kDistributionKey = 0x5a3c69f0cafe4a11;
 static constexpr std::uint64_t kAttributeKey = 0x4243544b5344422d;
 
@@ -167,7 +167,7 @@ ROOT::Experimental::Detail::RPageSinkDaos::CommitPageImpl(ColumnHandle_t columnH
       sealedPage = SealPage(page, *element, GetWriteOptions().GetCompression());
    }
 
-   fCounters->fSzZip.Add(page.GetSize());
+   fCounters->fSzZip.Add(page.GetNBytes());
    return CommitSealedPageImpl(columnHandle.fId, sealedPage);
 }
 
@@ -188,17 +188,15 @@ ROOT::Experimental::Detail::RPageSinkDaos::CommitSealedPageImpl(
    result.fBytesOnStorage = sealedPage.fSize;
    fCounters->fNPageCommitted.Inc();
    fCounters->fSzWritePayload.Add(sealedPage.fSize);
+   fNBytesCurrentCluster += sealedPage.fSize;
    return result;
 }
 
 
-// TODO(jalopezg): the current byte range arithmetic makes little sense for the
-// object store. We might find out, however, that there are native ways to group
-// clusters in DAOS.
-ROOT::Experimental::RClusterDescriptor::RLocator
+std::uint64_t
 ROOT::Experimental::Detail::RPageSinkDaos::CommitClusterImpl(ROOT::Experimental::NTupleSize_t /* nEntries */)
 {
-   return {};
+   return std::exchange(fNBytesCurrentCluster, 0);
 }
 
 
@@ -247,7 +245,7 @@ ROOT::Experimental::Detail::RPage
 ROOT::Experimental::Detail::RPageSinkDaos::ReservePage(ColumnHandle_t columnHandle, std::size_t nElements)
 {
    if (nElements == 0)
-      nElements = GetWriteOptions().GetNElementsPerPage();
+      throw RException(R__FAIL("invalid call: request empty page"));
    auto elementSize = columnHandle.fColumn->GetElement()->GetSize();
    return fPageAllocator->NewPage(columnHandle.fId, elementSize, nElements);
 }
@@ -264,8 +262,8 @@ void ROOT::Experimental::Detail::RPageSinkDaos::ReleasePage(RPage &page)
 ROOT::Experimental::Detail::RPage ROOT::Experimental::Detail::RPageAllocatorDaos::NewPage(
    ColumnId_t columnId, void *mem, std::size_t elementSize, std::size_t nElements)
 {
-   RPage newPage(columnId, mem, elementSize * nElements, elementSize);
-   newPage.TryGrow(nElements);
+   RPage newPage(columnId, mem, elementSize, nElements);
+   newPage.GrowUnchecked(nElements);
    return newPage;
 }
 
@@ -459,71 +457,77 @@ std::unique_ptr<ROOT::Experimental::Detail::RPageSource> ROOT::Experimental::Det
    return std::unique_ptr<RPageSourceDaos>(clone);
 }
 
-std::unique_ptr<ROOT::Experimental::Detail::RCluster>
-ROOT::Experimental::Detail::RPageSourceDaos::LoadCluster(DescriptorId_t clusterId, const ColumnSet_t &columns)
+std::vector<std::unique_ptr<ROOT::Experimental::Detail::RCluster>>
+ROOT::Experimental::Detail::RPageSourceDaos::LoadClusters(std::span<RCluster::RKey> clusterKeys)
 {
-   fCounters->fNClusterLoaded.Inc();
+   std::vector<std::unique_ptr<ROOT::Experimental::Detail::RCluster>> result;
+   for (const auto &clusterKey : clusterKeys) {
+      auto clusterId = clusterKey.fClusterId;
+      fCounters->fNClusterLoaded.Inc();
 
-   const auto &clusterDesc = GetDescriptor().GetClusterDescriptor(clusterId);
-   auto clusterLocator = clusterDesc.GetLocator();
+      const auto &clusterDesc = GetDescriptor().GetClusterDescriptor(clusterId);
+      auto clusterLocator = clusterDesc.GetLocator();
 
-   struct RDaosSealedPageLocator {
-      RDaosSealedPageLocator() = default;
-      RDaosSealedPageLocator(DescriptorId_t c, NTupleSize_t p, std::uint64_t o, std::uint64_t s, std::size_t b)
-         : fColumnId(c), fPageNo(p), fObjectId(o), fSize(s), fBufPos(b) {}
-      DescriptorId_t fColumnId = 0;
-      NTupleSize_t fPageNo = 0;
-      std::uint64_t fObjectId = 0;
-      std::uint64_t fSize = 0;
-      std::size_t fBufPos = 0;
-   };
+      struct RDaosSealedPageLocator {
+         RDaosSealedPageLocator() = default;
+         RDaosSealedPageLocator(DescriptorId_t c, NTupleSize_t p, std::uint64_t o, std::uint64_t s, std::size_t b)
+            : fColumnId(c), fPageNo(p), fObjectId(o), fSize(s), fBufPos(b) {}
+         DescriptorId_t fColumnId = 0;
+         NTupleSize_t fPageNo = 0;
+         std::uint64_t fObjectId = 0;
+         std::uint64_t fSize = 0;
+         std::size_t fBufPos = 0;
+      };
 
-   // Collect the page necessary page meta-data and sum up the total size of the compressed and packed pages
-   std::vector<RDaosSealedPageLocator> onDiskPages;
-   std::size_t szPayload = 0;
-   for (auto columnId : columns) {
-      const auto &pageRange = clusterDesc.GetPageRange(columnId);
-      NTupleSize_t pageNo = 0;
-      for (const auto &pageInfo : pageRange.fPageInfos) {
-         const auto &pageLocator = pageInfo.fLocator;
-         onDiskPages.emplace_back(RDaosSealedPageLocator(
-            columnId, pageNo, pageLocator.fPosition, pageLocator.fBytesOnStorage, szPayload));
-         szPayload += pageLocator.fBytesOnStorage;
-         ++pageNo;
+      // Collect the page necessary page meta-data and sum up the total size of the compressed and packed pages
+      std::vector<RDaosSealedPageLocator> onDiskPages;
+      std::size_t szPayload = 0;
+      for (auto columnId : clusterKey.fColumnSet) {
+         const auto &pageRange = clusterDesc.GetPageRange(columnId);
+         NTupleSize_t pageNo = 0;
+         for (const auto &pageInfo : pageRange.fPageInfos) {
+            const auto &pageLocator = pageInfo.fLocator;
+            onDiskPages.emplace_back(RDaosSealedPageLocator(
+               columnId, pageNo, pageLocator.fPosition, pageLocator.fBytesOnStorage, szPayload));
+            szPayload += pageLocator.fBytesOnStorage;
+            ++pageNo;
+         }
       }
-   }
 
-   // Prepare the input vector for the RDaosContainer::ReadV() call
-   std::vector<RDaosContainer::RWOperation> readRequests;
-   auto buffer = new unsigned char[szPayload];
-   for (auto &s : onDiskPages) {
-      std::vector<d_iov_t> iovs(1);
-      d_iov_set(&iovs[0], buffer + s.fBufPos, s.fSize);
-      readRequests.emplace_back(daos_obj_id_t{s.fObjectId, 0},
-                                kDistributionKey, kAttributeKey, iovs);
-   }
-   fCounters->fSzReadPayload.Add(szPayload);
+      // Prepare the input vector for the RDaosContainer::ReadV() call
+      std::vector<RDaosContainer::RWOperation> readRequests;
+      auto buffer = new unsigned char[szPayload];
+      for (auto &s : onDiskPages) {
+         std::vector<d_iov_t> iovs(1);
+         d_iov_set(&iovs[0], buffer + s.fBufPos, s.fSize);
+         readRequests.emplace_back(daos_obj_id_t{s.fObjectId, 0},
+                                   kDistributionKey, kAttributeKey, iovs);
+      }
+      fCounters->fSzReadPayload.Add(szPayload);
 
-   // Register the on disk pages in a page map
-   auto pageMap = std::make_unique<ROnDiskPageMapHeap>(std::unique_ptr<unsigned char []>(buffer));
-   for (const auto &s : onDiskPages) {
-      ROnDiskPage::Key key(s.fColumnId, s.fPageNo);
-      pageMap->Register(key, ROnDiskPage(buffer + s.fBufPos, s.fSize));
-   }
-   fCounters->fNPageLoaded.Add(onDiskPages.size());
+      // Register the on disk pages in a page map
+      auto pageMap = std::make_unique<ROnDiskPageMapHeap>(std::unique_ptr<unsigned char []>(buffer));
+      for (const auto &s : onDiskPages) {
+         ROnDiskPage::Key key(s.fColumnId, s.fPageNo);
+         pageMap->Register(key, ROnDiskPage(buffer + s.fBufPos, s.fSize));
+      }
+      fCounters->fNPageLoaded.Add(onDiskPages.size());
 
-   {
-      RNTupleAtomicTimer timer(fCounters->fTimeWallRead, fCounters->fTimeCpuRead);
-      fDaosContainer->ReadV(readRequests);
-   }
-   fCounters->fNReadV.Inc();
-   fCounters->fNRead.Add(readRequests.size());
+      {
+         RNTupleAtomicTimer timer(fCounters->fTimeWallRead, fCounters->fTimeCpuRead);
+         fDaosContainer->ReadV(readRequests);
+      }
+      fCounters->fNReadV.Inc();
+      fCounters->fNRead.Add(readRequests.size());
 
-   auto cluster = std::make_unique<RCluster>(clusterId);
-   cluster->Adopt(std::move(pageMap));
-   for (auto colId : columns)
-      cluster->SetColumnAvailable(colId);
-   return cluster;
+      auto cluster = std::make_unique<RCluster>(clusterId);
+      cluster->Adopt(std::move(pageMap));
+      for (auto colId : clusterKey.fColumnSet)
+         cluster->SetColumnAvailable(colId);
+
+      result.emplace_back(std::move(cluster));
+   }
+   return result;
 }
 
 

@@ -34,7 +34,7 @@
 ClassImp(TGraphAsymmErrors);
 
 /** \class TGraphAsymmErrors
-    \ingroup Hist
+    \ingroup Graphs
 TGraph with asymmetric error bars.
 
 The TGraphAsymmErrors painting is performed thanks to the TGraphPainter
@@ -1110,7 +1110,6 @@ void TGraphAsymmErrors::FillZero(Int_t begin, Int_t end,
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
 /// It returns the error along X at point i.
 
 Double_t TGraphAsymmErrors::GetErrorX(Int_t i) const
@@ -1125,7 +1124,6 @@ Double_t TGraphAsymmErrors::GetErrorX(Int_t i) const
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
 /// It returns the error along Y at point i.
 
 Double_t TGraphAsymmErrors::GetErrorY(Int_t i) const
@@ -1313,6 +1311,35 @@ void TGraphAsymmErrors::SavePrimitive(std::ostream &out, Option_t *option /*= ""
       out<<"   multigraph->Add(grae,"<<quote<<l+10<<quote<<");"<<std::endl;
    } else {
       out<<"   grae->Draw("<<quote<<option<<quote<<");"<<std::endl;
+   }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Multiply the values and errors of a TGraphAsymmErrors by a constant c1.
+///
+/// If option contains "x" the x values and errors are scaled
+/// If option contains "y" the y values and errors are scaled
+/// If option contains "xy" both x and y values and errors are scaled
+
+void TGraphAsymmErrors::Scale(Double_t c1, Option_t *option)
+{
+   TGraph::Scale(c1, option);
+   TString opt = option; opt.ToLower();
+   if (opt.Contains("x") && GetEXlow()) {
+      for (Int_t i=0; i<GetN(); i++)
+         GetEXlow()[i] *= c1;
+   }
+   if (opt.Contains("x") && GetEXhigh()) {
+      for (Int_t i=0; i<GetN(); i++)
+         GetEXhigh()[i] *= c1;
+   }
+   if (opt.Contains("y") && GetEYlow()) {
+      for (Int_t i=0; i<GetN(); i++)
+         GetEYlow()[i] *= c1;
+   }
+   if (opt.Contains("y") && GetEYhigh()) {
+      for (Int_t i=0; i<GetN(); i++)
+         GetEYhigh()[i] *= c1;
    }
 }
 

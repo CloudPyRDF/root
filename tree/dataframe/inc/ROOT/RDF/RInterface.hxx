@@ -1,7 +1,7 @@
 // Author: Enrico Guiraud, Danilo Piparo CERN  03/2017
 
 /*************************************************************************
- * Copyright (C) 1995-2018, Rene Brun and Fons Rademakers.               *
+ * Copyright (C) 1995-2021, Rene Brun and Fons Rademakers.               *
  * All rights reserved.                                                  *
  *                                                                       *
  * For the licensing terms see $ROOTSYS/LICENSE.                         *
@@ -18,8 +18,10 @@
 #include "ROOT/RDF/InterfaceUtils.hxx"
 #include "ROOT/RDF/RBookedDefines.hxx"
 #include "ROOT/RDF/RDefine.hxx"
+#include "ROOT/RDF/RDefinePerSample.hxx"
 #include "ROOT/RDF/RFilter.hxx"
 #include "ROOT/RDF/RLazyDSImpl.hxx"
+#include "ROOT/RDF/RLoopManager.hxx"
 #include "ROOT/RDF/RRange.hxx"
 #include "ROOT/RDF/Utils.hxx"
 #include "ROOT/RResultPtr.hxx"
@@ -104,13 +106,15 @@ class RInterface {
    template <typename T, typename W>
    friend class RInterface;
 
+   friend void RDFInternal::TriggerRun(RNode &node);
+
    std::shared_ptr<Proxied> fProxiedPtr; ///< Smart pointer to the graph node encapsulated by this RInterface.
    ///< The RLoopManager at the root of this computation graph. Never null.
    RLoopManager *fLoopManager;
    /// Non-owning pointer to a data-source object. Null if no data-source. RLoopManager has ownership of the object.
    RDataSource *fDataSource = nullptr;
 
-   /// Contains the custom columns defined up to this node.
+   /// Contains the columns defined up to this node.
    RDFInternal::RBookedDefines fDefines;
 
 public:
@@ -127,9 +131,10 @@ public:
    RInterface(RInterface &&) = default;
 
    ////////////////////////////////////////////////////////////////////////////
-   /// \brief Only enabled when building a RInterface<RLoopManager>.
-   template <typename T = Proxied, std::enable_if_t<std::is_same<T, RLoopManager>::value, int> = 0>
-   RInterface(const std::shared_ptr<Proxied> &proxied)
+   /// \brief Build a RInterface from a RLoopManager.
+   /// This constructor is only available for RInterface<RLoopManager>.
+   template <typename T = Proxied, typename = std::enable_if_t<std::is_same<T, RLoopManager>::value, int>>
+   RInterface(const std::shared_ptr<RLoopManager> &proxied)
       : fProxiedPtr(proxied), fLoopManager(proxied.get()), fDataSource(proxied->GetDataSource())
    {
       AddDefaultColumns();
@@ -267,13 +272,13 @@ public:
 
    // clang-format off
    ////////////////////////////////////////////////////////////////////////////
-   /// \brief Creates a custom column.
-   /// \param[in] name The name of the custom column.
-   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the custom column.
+   /// \brief Define a new column.
+   /// \param[in] name The name of the defined column.
+   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the defined column.
    /// \param[in] columns Names of the columns/branches in input to the producer function.
    /// \return the first node of the computation graph for which the new quantity is defined.
    ///
-   /// Create a custom column that will be visible from all subsequent nodes
+   /// Define a column that will be visible from all subsequent nodes
    /// of the functional chain. The `expression` is only evaluated for entries that pass
    /// all the preceding filters.
    /// A new variable is created called `name`, accessible as if it was contained
@@ -303,13 +308,13 @@ public:
 
    // clang-format off
    ////////////////////////////////////////////////////////////////////////////
-   /// \brief Creates a custom column with a value dependent on the processing slot.
-   /// \param[in] name The name of the custom column.
-   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the custom column.
+   /// \brief Define a new column with a value dependent on the processing slot.
+   /// \param[in] name The name of the defined column.
+   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the defined column.
    /// \param[in] columns Names of the columns/branches in input to the producer function (excluding the slot number).
    /// \return the first node of the computation graph for which the new quantity is defined.
    ///
-   /// This alternative implementation of `Define` is meant as a helper in writing thread-safe custom columns.
+   /// This alternative implementation of `Define` is meant as a helper to evaluate new column values in a thread-safe manner.
    /// The expression must be a callable of signature R(unsigned int, T1, T2, ...) where `T1, T2...` are the types
    /// of the columns that the expression takes as input. The first parameter is reserved for an unsigned integer
    /// representing a "slot number". RDataFrame guarantees that different threads will invoke the expression with
@@ -332,9 +337,9 @@ public:
 
    // clang-format off
    ////////////////////////////////////////////////////////////////////////////
-   /// \brief Creates a custom column with a value dependent on the processing slot and the current entry.
-   /// \param[in] name The name of the custom column.
-   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the custom column.
+   /// \brief Define a new column with a value dependent on the processing slot and the current entry.
+   /// \param[in] name The name of the defined column.
+   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the defined column.
    /// \param[in] columns Names of the columns/branches in input to the producer function (excluding slot and entry).
    /// \return the first node of the computation graph for which the new quantity is defined.
    ///
@@ -362,8 +367,8 @@ public:
    // clang-format on
 
    ////////////////////////////////////////////////////////////////////////////
-   /// \brief Creates a custom column.
-   /// \param[in] name The name of the custom column.
+   /// \brief Define a new column.
+   /// \param[in] name The name of the defined column.
    /// \param[in] expression An expression in C++ which represents the defined value
    /// \return the first node of the computation graph for which the new quantity is defined.
    ///
@@ -394,13 +399,15 @@ public:
    }
 
    ////////////////////////////////////////////////////////////////////////////
-   /// \brief Creates a custom column
-   /// \param[in] name The name of the custom column.
-   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the custom column.
-   /// \param[in] columns Names of the columns/branches in input to the producer function.
-   /// \return the first node of the computation graph for which the new quantity is defined.
+   /// \brief Overwrite the value and/or type of an existing column.
+   /// \param[in] name The name of the column to redefine.
+   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the defined column.
+   /// \param[in] columns Names of the columns/branches in input to the expression.
+   /// \return the first node of the computation graph for which the quantity is redefined.
    ///
-   /// An exception is thrown in case the column to re-define does not already exist.
+   /// The old value of the column can be used as an input for the expression.
+   ///
+   /// An exception is thrown in case the column to redefine does not already exist.
    /// See Define() for more information.
    template <typename F, std::enable_if_t<!std::is_convertible<F, std::string>::value, int> = 0>
    RInterface<Proxied, DS_t> Redefine(std::string_view name, F expression, const ColumnNames_t &columns = {})
@@ -410,13 +417,14 @@ public:
 
    // clang-format off
    ////////////////////////////////////////////////////////////////////////////
-   /// \brief Creates a custom column, possibly overriding an existing one with the same name.
-   /// \param[in] name The name of the custom column.
-   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the custom column.
+   /// \brief Overwrite the value and/or type of an existing column.
+   /// \param[in] name The name of the column to redefine.
+   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the defined column.
    /// \param[in] columns Names of the columns/branches in input to the producer function (excluding slot).
    /// \return the first node of the computation graph for which the new quantity is defined.
    ///
-   /// An exception is thrown in case the column to re-define does not already exist.
+   /// The old value of the column can be used as an input for the expression.
+   /// An exception is thrown in case the column to redefine does not already exist.
    ///
    /// See DefineSlot() for more information.
    // clang-format on
@@ -428,12 +436,13 @@ public:
 
    // clang-format off
    ////////////////////////////////////////////////////////////////////////////
-   /// \brief Creates a custom column, possibly overriding an existing one with the same name.
-   /// \param[in] name The name of the custom column.
-   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the custom column.
+   /// \brief Overwrite the value and/or type of an existing column.
+   /// \param[in] name The name of the column to redefine.
+   /// \param[in] expression Function, lambda expression, functor class or any other callable object producing the defined value. Returns the value that will be assigned to the defined column.
    /// \param[in] columns Names of the columns/branches in input to the producer function (excluding slot and entry).
    /// \return the first node of the computation graph for which the new quantity is defined.
    ///
+   /// The old value of the column can be used as an input for the expression.
    /// An exception is thrown in case the column to re-define does not already exist.
    ///
    /// See DefineSlotEntry() for more information.
@@ -446,8 +455,8 @@ public:
    }
 
    ////////////////////////////////////////////////////////////////////////////
-   /// \brief Creates a custom column, overriding an existing one with the same name.
-   /// \param[in] name The name of the custom column.
+   /// \brief Overwrite the value and/or type of an existing column.
+   /// \param[in] name The name of the column to redefine.
    /// \param[in] expression An expression in C++ which represents the defined value
    /// \return the first node of the computation graph for which the new quantity is defined.
    ///
@@ -455,6 +464,7 @@ public:
    /// It must be valid C++ syntax in which variable names are substituted with the names
    /// of branches/columns.
    ///
+   /// The old value of the column can be used as an input for the expression.
    /// An exception is thrown in case the column to re-define does not already exist.
    ///
    /// Aliases cannot be overridden. See the corresponding Define() overload for more information.
@@ -469,6 +479,117 @@ public:
       auto upcastNodeOnHeap = RDFInternal::MakeSharedOnHeap(RDFInternal::UpcastNode(fProxiedPtr));
       auto jittedDefine = RDFInternal::BookDefineJit(name, expression, *fLoopManager, fDataSource, fDefines,
                                                      fLoopManager->GetBranchNames(), upcastNodeOnHeap);
+
+      RDFInternal::RBookedDefines newCols(fDefines);
+      newCols.AddColumn(jittedDefine, name);
+
+      RInterface<Proxied, DS_t> newInterface(fProxiedPtr, *fLoopManager, std::move(newCols), fDataSource);
+
+      return newInterface;
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
+   /// \brief Define a new column that is updated when the input sample changes.
+   /// \param[in] name The name of the defined column.
+   /// \param[in] expression A C++ callable that computes the new value of the defined column.
+   /// \return the first node of the computation graph for which the new quantity is defined.
+   ///
+   /// The signature of the callable passed as second argument should be `T(unsigned int slot, const ROOT::RDF::RSampleInfo &id)`
+   /// where:
+   /// - `T` is the type of the defined column
+   /// - `slot` is a number in the range [0, nThreads) that is different for each processing thread. This can simplify
+   ///   the definition of thread-safe callables if you are interested in using parallel capabilities of RDataFrame.
+   /// - `id` is an instance of a ROOT::RDF::RSampleInfo object which contains information about the sample which is
+   ///   being processed (see the class docs for more information).
+   ///
+   /// DefinePerSample() is useful to e.g. define a quantity that depends on which TTree in which TFile is being
+   /// processed or to inject a callback into the event loop that is only called when the processing of a new sample
+   /// starts rather than at every entry.
+   ///
+   /// ### Example usage:
+   /// ~~~{.cpp}
+   /// ROOT::RDataFrame df{"mytree", {"sample1.root","sample2.root"}};
+   /// df.DefinePerSample("weightbysample",
+   ///                    [](unsigned int slot, const ROOT::RDF::RSampleInfo &id)
+   ///                    { return id.Contains("sample1") ? 1.0f : 2.0f; });
+   /// ~~~
+   // TODO we could SFINAE on F's signature to provide friendlier compilation errors in case of signature mismatch
+   template <typename F, typename RetType_t = typename TTraits::CallableTraits<F>::ret_type>
+   RInterface<Proxied, DS_t> DefinePerSample(std::string_view name, F expression)
+   {
+      RDFInternal::CheckValidCppVarName(name, "DefinePerSample");
+      RDFInternal::CheckForRedefinition("DefinePerSample", name, fDefines.GetNames(), fLoopManager->GetAliasMap(),
+                                        fLoopManager->GetBranchNames(),
+                                        fDataSource ? fDataSource->GetColumnNames() : ColumnNames_t{});
+
+      auto retTypeName = RDFInternal::TypeID2TypeName(typeid(RetType_t));
+      if (retTypeName.empty()) {
+         // The type is not known to the interpreter.
+         // We must not error out here, but if/when this column is used in jitted code
+         const auto demangledType = RDFInternal::DemangleTypeIdName(typeid(RetType_t));
+         retTypeName = "CLING_UNKNOWN_TYPE_" + demangledType;
+      }
+
+      auto newColumn = std::make_shared<RDFDetail::RDefinePerSample<F>>(name, retTypeName, std::move(expression),
+                                                                        fLoopManager->GetNSlots());
+
+      auto updateDefinePerSample = [newColumn](unsigned int slot, const ROOT::RDF::RSampleInfo &id) {
+         newColumn->Update(slot, id);
+      };
+      fLoopManager->AddSampleCallback(std::move(updateDefinePerSample));
+
+      RDFInternal::RBookedDefines newCols(fDefines);
+      newCols.AddColumn(std::move(newColumn), name);
+      RInterface<Proxied> newInterface(fProxiedPtr, *fLoopManager, std::move(newCols), fDataSource);
+      return newInterface;
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
+   /// \brief Define a new column that is updated when the input sample changes.
+   /// \param[in] name The name of the defined column.
+   /// \param[in] expression A valid C++ expression as a string, which will be used to compute the defined value.
+   /// \return the first node of the computation graph for which the new quantity is defined.
+   ///
+   /// The expression is just-in-time compiled and used to produce the column entries.
+   /// It must be valid C++ syntax and the usage of the special variable names `rdfslot_` and `rdfsampleinfo_` is
+   /// permitted, where these variables will take the same values as the `slot` and `id` parameters described at the
+   /// DefinePerSample(std::string_view name, F expression) overload. See the documentation of that overload for more information.
+   ///
+   /// ### Example usage:
+   /// ~~~{.py}
+   /// df = ROOT.RDataFrame("mytree", ["sample1.root","sample2.root"])
+   /// df.DefinePerSample("weightbysample", "rdfsampleinfo_.Contains('sample1') ? 1.0f : 2.0f")
+   /// ~~~
+   ///
+   /// \note
+   /// If you have declared some C++ function to the interpreter, the correct syntax to call that function with this
+   /// overload of DefinePerSample is by calling it explicitly with the special names `rdfslot_` and `rdfsampleinfo_` as
+   /// input parameters. This is for example the correct way to call this overload when working in PyROOT:
+   /// ~~~{.py}
+   /// ROOT.gInterpreter.Declare(
+   /// """
+   /// float weights(unsigned int slot, const ROOT::RDF::RSampleInfo &id){
+   ///    return id.Contains("sample1") ? 1.0f : 2.0f;
+   /// }
+   /// """)
+   /// df = ROOT.RDataFrame("mytree", ["sample1.root","sample2.root"])
+   /// df.DefinePerSample("weightsbysample", "weights(rdfslot_, rdfsampleinfo_)")
+   /// ~~~
+   RInterface<Proxied, DS_t> DefinePerSample(std::string_view name, std::string_view expression)
+   {
+      RDFInternal::CheckValidCppVarName(name, "DefinePerSample");
+      // these checks must be done before jitting lest we throw exceptions in jitted code
+      RDFInternal::CheckForRedefinition("DefinePerSample", name, fDefines.GetNames(), fLoopManager->GetAliasMap(),
+                                        fLoopManager->GetBranchNames(),
+                                        fDataSource ? fDataSource->GetColumnNames() : ColumnNames_t{});
+
+      auto upcastNodeOnHeap = RDFInternal::MakeSharedOnHeap(RDFInternal::UpcastNode(fProxiedPtr));
+      auto jittedDefine =
+         RDFInternal::BookDefinePerSampleJit(name, expression, *fLoopManager, fDefines, upcastNodeOnHeap);
+      auto updateDefinePerSample = [jittedDefine](unsigned int slot, const ROOT::RDF::RSampleInfo &id) {
+         jittedDefine->Update(slot, id);
+      };
+      fLoopManager->AddSampleCallback(std::move(updateDefinePerSample));
 
       RDFInternal::RBookedDefines newCols(fDefines);
       newCols.AddColumn(jittedDefine, name);
@@ -537,6 +658,12 @@ public:
    /// names of branches in the main TTree/TChain will be written out. Since v6.24, Snapshot will also write out
    /// friend branches with the same names of branches in the main TTree/TChain with names of the form
    /// '<friendname>_<branchname>' in order to differentiate them from the branches in the main tree/chain.
+   ///
+   /// ### Writing to a sub-directory
+   ///
+   /// Snapshot supports writing the TTree in a sub-directory inside the TFile. It is sufficient to specify the path to
+   /// the TTree as part of the TTree name, e.g. `df.Snapshot("subdir/t", "f.root")` write TTree `t` in the
+   /// sub-directory `subdir` of file `f.root` (creating file and sub-directory as needed).
    ///
    /// \attention In multi-thread runs (i.e. when EnableImplicitMT() has been called) threads will loop over clusters of
    /// entries in an undefined order, so Snapshot will produce outputs in which (clusters of) entries will be shuffled with
@@ -2114,7 +2241,7 @@ public:
    ///
    /// This is not an action nor a transformation, just a simple utility to
    /// get the columns names that have been defined up to the node.
-   /// If no custom column has been defined, e.g. on a root node, it returns an
+   /// If no column has been defined, e.g. on a root node, it returns an
    /// empty collection.
    ///
    /// ### Example usage:
@@ -2449,13 +2576,15 @@ public:
    /// \tparam ColumnTypes variadic list of branch/column types.
    /// \param[in] columnList Names of the columns to be displayed.
    /// \param[in] nRows Number of events for each column to be displayed.
+   /// \param[in] nMaxCollectionElements Maximum number of collection elements to display per row.
    /// \return the `RDisplay` instance wrapped in a RResultPtr.
    ///
    /// This function returns a RResultPtr<RDisplay>` containing all the entries to be displayed, organized in a tabular
    /// form. RDisplay will either print on the standard output a summarized version through `Print()` or will return a
    /// complete version through `AsString()`.
    ///
-   /// This action is *lazy*: upon invocation of this method the calculation is booked but not executed. Also see RResultPtr.
+   /// This action is *lazy*: upon invocation of this method the calculation is booked but not executed. Also see
+   /// RResultPtr.
    ///
    /// Example usage:
    /// ~~~{.cpp}
@@ -2468,44 +2597,55 @@ public:
    /// d2->Print();
    /// ~~~
    template <typename... ColumnTypes>
-   RResultPtr<RDisplay> Display(const ColumnNames_t &columnList, const int &nRows = 5)
+   RResultPtr<RDisplay>
+   Display(const ColumnNames_t &columnList, int nRows = 5, size_t nMaxCollectionElements = 10)
    {
-      CheckIMTDisabled("Display");
-
-      auto displayer = std::make_shared<RDFInternal::RDisplay>(columnList, GetColumnTypeNamesList(columnList), nRows);
-      return CreateAction<RDFInternal::ActionTags::Display, ColumnTypes...>(columnList, displayer, displayer);
+      CheckIMTDisabled("Display");  
+      auto newCols = columnList;
+      newCols.insert(newCols.begin(), "rdfentry_"); // Artificially insert first column
+      auto displayer = std::make_shared<RDFInternal::RDisplay>(newCols, GetColumnTypeNamesList(newCols), nRows, nMaxCollectionElements);
+      // Need to add ULong64_t type corresponding to the first column rdfentry_
+      return CreateAction<RDFInternal::ActionTags::Display, ULong64_t, ColumnTypes...>(newCols, displayer, displayer);
    }
 
    ////////////////////////////////////////////////////////////////////////////
    /// \brief Provides a representation of the columns in the dataset.
    /// \param[in] columnList Names of the columns to be displayed.
    /// \param[in] nRows Number of events for each column to be displayed.
+   /// \param[in] nMaxCollectionElements  Maximum number of collection elements to display per row.
    /// \return the `RDisplay` instance wrapped in a RResultPtr.
    ///
    /// This overload automatically infers the column types.
    /// See the previous overloads for further details.
-   RResultPtr<RDisplay> Display(const ColumnNames_t &columnList, const int &nRows = 5)
+   ///
+   /// Invoked when no types are specified to Display
+   RResultPtr<RDisplay>
+   Display(const ColumnNames_t &columnList, int nRows = 5, size_t nMaxCollectionElements = 10)
    {
       CheckIMTDisabled("Display");
-      auto displayer = std::make_shared<RDFInternal::RDisplay>(columnList, GetColumnTypeNamesList(columnList), nRows);
-      return CreateAction<RDFInternal::ActionTags::Display, RDFDetail::RInferredType>(columnList, displayer, displayer,
-                                                                                      columnList.size());
+      auto newCols = columnList;
+      newCols.insert(newCols.begin(), "rdfentry_"); // Artificially insert first column
+      auto displayer = std::make_shared<RDFInternal::RDisplay>(newCols, GetColumnTypeNamesList(newCols), nRows, nMaxCollectionElements);
+      return CreateAction<RDFInternal::ActionTags::Display, RDFDetail::RInferredType>(newCols, displayer, displayer,
+                                                                                      newCols.size());
    }
 
    ////////////////////////////////////////////////////////////////////////////
    /// \brief Provides a representation of the columns in the dataset.
    /// \param[in] columnNameRegexp A regular expression to select the columns.
    /// \param[in] nRows Number of events for each column to be displayed.
+   /// \param[in] nMaxCollectionElements Maximum number of collection elements to display per row.
    /// \return the `RDisplay` instance wrapped in a RResultPtr.
    ///
    /// The existing columns are matched against the regular expression. If the string provided
    /// is empty, all columns are selected.
    /// See the previous overloads for further details.
-   RResultPtr<RDisplay> Display(std::string_view columnNameRegexp = "", const int &nRows = 5)
+   RResultPtr<RDisplay>
+   Display(std::string_view columnNameRegexp = "", int nRows = 5, size_t nMaxCollectionElements = 10)
    {
       const auto columnNames = GetColumnNames();
       const auto selectedColumns = RDFInternal::ConvertRegexToColumns(columnNames, columnNameRegexp, "Display");
-      return Display(selectedColumns, nRows);
+      return Display(selectedColumns, nRows, nMaxCollectionElements);
    }
 
    ////////////////////////////////////////////////////////////////////////////
@@ -2515,10 +2655,11 @@ public:
    /// \return the `RDisplay` instance wrapped in a RResultPtr.
    ///
    /// See the previous overloads for further details.
-   RResultPtr<RDisplay> Display(std::initializer_list<std::string> columnList, const int &nRows = 5)
+   RResultPtr<RDisplay> Display(std::initializer_list<std::string> columnList, int nRows = 5,
+                                size_t nMaxCollectionElements = 10)
    {
       ColumnNames_t selectedColumns(columnList);
-      return Display(selectedColumns, nRows);
+      return Display(selectedColumns, nRows, nMaxCollectionElements);
    }
 
 private:
@@ -2597,7 +2738,7 @@ private:
       auto action =
          RDFInternal::BuildAction<ColTypes...>(validColumnNames, helperArg, nSlots, fProxiedPtr, ActionTag{}, fDefines);
       fLoopManager->Book(action.get());
-      fLoopManager->AddDataBlockCallback(action->GetDataBlockCallback());
+      fLoopManager->AddSampleCallback(action->GetSampleCallback());
       return MakeResultPtr(r, *fLoopManager, std::move(action));
    }
 
@@ -2677,7 +2818,7 @@ private:
       RDFInternal::RBookedDefines newCols(fDefines);
       newCols.AddColumn(newColumn, name);
 
-      RInterface<Proxied> newInterface(fProxiedPtr, *fLoopManager, newCols, fDataSource);
+      RInterface<Proxied> newInterface(fProxiedPtr, *fLoopManager, std::move(newCols), fDataSource);
 
       return newInterface;
    }

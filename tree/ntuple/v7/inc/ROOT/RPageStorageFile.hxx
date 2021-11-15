@@ -19,6 +19,7 @@
 #include <ROOT/RMiniFile.hxx>
 #include <ROOT/RNTupleZip.hxx>
 #include <ROOT/RPageStorage.hxx>
+#include <ROOT/RRawFile.hxx>
 #include <ROOT/RStringView.hxx>
 
 #include <array>
@@ -61,6 +62,8 @@ private:
    std::uint64_t fClusterMinOffset = std::uint64_t(-1);
    /// Byte offset of the end of the last page of the current cluster
    std::uint64_t fClusterMaxOffset = 0;
+   /// Number of bytes committed to storage in the current cluster
+   std::uint64_t fNBytesCurrentCluster = 0;
    RPageSinkFile(std::string_view ntupleName, const RNTupleWriteOptions &options);
 
    RClusterDescriptor::RLocator WriteSealedPage(const RPageStorage::RSealedPage &sealedPage,
@@ -71,7 +74,7 @@ protected:
    RClusterDescriptor::RLocator CommitPageImpl(ColumnHandle_t columnHandle, const RPage &page) final;
    RClusterDescriptor::RLocator CommitSealedPageImpl(DescriptorId_t columnId,
                                                      const RPageStorage::RSealedPage &sealedPage) final;
-   RClusterDescriptor::RLocator CommitClusterImpl(NTupleSize_t nEntries) final;
+   std::uint64_t CommitClusterImpl(NTupleSize_t nEntries) final;
    void CommitDatasetImpl() final;
 
 public:
@@ -85,7 +88,7 @@ public:
    RPageSinkFile& operator=(RPageSinkFile&&) = default;
    virtual ~RPageSinkFile();
 
-   RPage ReservePage(ColumnHandle_t columnHandle, std::size_t nElements = 0) final;
+   RPage ReservePage(ColumnHandle_t columnHandle, std::size_t nElements) final;
    void ReleasePage(RPage &page) final;
 };
 
@@ -134,6 +137,14 @@ private:
    RPage PopulatePageFromCluster(ColumnHandle_t columnHandle, const RClusterDescriptor &clusterDescriptor,
                                  ClusterSize_t::ValueType idxInCluster);
 
+   /// Helper function for LoadClusters: it prepares the memory buffer (page map) and the
+   /// read requests for a given cluster and columns.  The reead requests are appended to
+   /// the provided vector.  This way, requests can be collected for multiple clusters before
+   /// sending them to RRawFile::ReadV().
+   std::unique_ptr<RCluster> PrepareSingleCluster(
+      const RCluster::RKey &clusterKey,
+      std::vector<ROOT::Internal::RRawFile::RIOVec> &readRequests);
+
 protected:
    RNTupleDescriptor AttachImpl() final;
    void UnzipClusterImpl(RCluster *cluster) final;
@@ -157,7 +168,7 @@ public:
    void LoadSealedPage(DescriptorId_t columnId, const RClusterIndex &clusterIndex,
                        RSealedPage &sealedPage) final;
 
-   std::unique_ptr<RCluster> LoadCluster(DescriptorId_t clusterId, const ColumnSet_t &columns) final;
+   std::vector<std::unique_ptr<RCluster>> LoadClusters(std::span<RCluster::RKey> clusterKeys) final;
 };
 
 

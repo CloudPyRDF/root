@@ -1,5 +1,28 @@
 # JSROOT changelog
 
+## Changes in dev
+1. Fix problem with curved TGraph drawings (#218)
+2. Provide x3dscNNN and y3dscNNN draw option for histogram to resize x/y axis
+3. Provide JSROOT.Painter.setDefaultDrawOpt to change default draw option
+4. Provide example of custom entries in context menu
+5. Fix problems with TGraph drawing updates
+6. Provide alternative location for zstd-codec
+7. Allows to use JSROOT.define() in external scripts
+8. Fix - properly draw TH1 with line option when fill attributes specified
+9. Fix error in objects drawing from the inspector
+10. Optmize TH2 col drawings to produce smaller SVG
+11. For sub-pads containers use svg:g with clip-path instead of svg:svg
+12. Let skip HEAD requests when reading files (#223)
+13. Fully redesing TLatex parsing, use many svg elements instead of plain text/tspan
+14. Make TLatex reliably working in node.js, does not depend from availability of canvas component
+
+
+## Changes in 6.2.1
+1. Fix logy and logz handling on lego plots
+2. Fix error in statistic calculations for projections
+3. Fix zstd-codec loading with minified jsroot scripts
+
+
 ## Changes in 6.2.0
 1. Support fully interactive second X/Y axis for histograms, graphs, functions and spline
 2. Support X+, Y+, RX, RY draw options for TF1

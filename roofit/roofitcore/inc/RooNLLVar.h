@@ -38,11 +38,12 @@ public:
 	    const RooCmdArg& arg7=RooCmdArg::none(), const RooCmdArg& arg8=RooCmdArg::none(),const RooCmdArg& arg9=RooCmdArg::none()) ;
 
   RooNLLVar(const char *name, const char *title, RooAbsPdf& pdf, RooAbsData& data,
-            RooAbsTestStatistic::Configuration const& cfg, bool extended);
+            bool extended,
+            RooAbsTestStatistic::Configuration const& cfg=RooAbsTestStatistic::Configuration{});
   
   RooNLLVar(const char *name, const char *title, RooAbsPdf& pdf, RooAbsData& data,
-            const RooArgSet& projDeps, RooAbsTestStatistic::Configuration const& cfg,
-            bool extended = false) ;
+            const RooArgSet& projDeps, bool extended = false,
+            RooAbsTestStatistic::Configuration const& cfg=RooAbsTestStatistic::Configuration{});
 
   RooNLLVar(const RooNLLVar& other, const char* name=0);
   virtual TObject* clone(const char* newname) const { return new RooNLLVar(*this,newname); }
@@ -61,6 +62,14 @@ public:
   }
 
   using ComputeResult = std::pair<ROOT::Math::KahanSum<double>, double>;
+
+  static RooNLLVar::ComputeResult computeBatchedFunc(const RooAbsPdf *pdfClone, RooAbsData *dataClone,
+                                                     std::unique_ptr<RooBatchCompute::RunContext> &evalData,
+                                                 RooArgSet *normSet, bool weightSq, std::size_t stepSize,
+                                                 std::size_t firstEvent, std::size_t lastEvent);
+  static RooNLLVar::ComputeResult computeScalarFunc(const RooAbsPdf *pdfClone, RooAbsData *dataClone, RooArgSet *normSet,
+                                                bool weightSq, std::size_t stepSize, std::size_t firstEvent,
+                                                std::size_t lastEvent);
 
 protected:
 

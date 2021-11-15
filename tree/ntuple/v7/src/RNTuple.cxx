@@ -277,8 +277,6 @@ ROOT::Experimental::RNTupleWriter::RNTupleWriter(
    : fSink(std::move(sink))
    , fModel(std::move(model))
    , fMetrics("RNTupleWriter")
-   , fLastCommitted(0)
-   , fNEntries(0)
 {
    if (!fModel) {
       throw RException(R__FAIL("null model"));
@@ -294,6 +292,12 @@ ROOT::Experimental::RNTupleWriter::RNTupleWriter(
 #endif
    fSink->Create(*fModel.get());
    fMetrics.ObserveMetrics(fSink->GetMetrics());
+
+   const auto &writeOpts = fSink->GetWriteOptions();
+   fMaxUnzippedClusterSize = writeOpts.GetMaxUnzippedClusterSize();
+   // First estimate is a factor 2 compression if compression is used at all
+   const int scale = writeOpts.GetCompression() ? 2 : 1;
+   fUnzippedClusterSizeEst = scale * writeOpts.GetApproxZippedClusterSize();
 }
 
 ROOT::Experimental::RNTupleWriter::~RNTupleWriter()
@@ -333,8 +337,17 @@ void ROOT::Experimental::RNTupleWriter::CommitCluster()
       field.Flush();
       field.CommitCluster();
    }
-   fSink->CommitCluster(fNEntries);
+   fNBytesCommitted += fSink->CommitCluster(fNEntries);
+   fNBytesFilled += fUnzippedClusterSize;
+
+   // Cap the compression factor at 1000 to prevent overflow of fUnzippedClusterSizeEst
+   const float compressionFactor = std::min(1000.f,
+      static_cast<float>(fNBytesFilled) / static_cast<float>(fNBytesCommitted));
+   fUnzippedClusterSizeEst =
+      compressionFactor * static_cast<float>(fSink->GetWriteOptions().GetApproxZippedClusterSize());
+
    fLastCommitted = fNEntries;
+   fUnzippedClusterSize = 0;
 }
 
 

@@ -19,7 +19,6 @@ import os
 import sys
 import select
 import tempfile
-import pty
 import itertools
 import re
 import fnmatch
@@ -561,10 +560,12 @@ class NotebookDrawer(object):
         return 0
 
     def _getPngImage(self):
-        ofile = tempfile.NamedTemporaryFile(suffix=".png")
+        ofile = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         with _setIgnoreLevel(ROOT.kError):
             self.drawableObject.SaveAs(ofile.name)
         img = IPython.display.Image(filename=ofile.name, format='png', embed=True)
+        ofile.close()
+        os.unlink(ofile.name)
         return img
 
     def _pngDisplay(self):

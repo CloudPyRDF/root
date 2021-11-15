@@ -69,7 +69,7 @@ private:
    using VecStr_t = std::vector<std::string>;
    using DElement_t = ROOT::Internal::RDF::RDisplayElement;
    static constexpr char fgSeparator = ' '; ///< Spacing used to align the table entries
-   static constexpr unsigned fgMaxWidth = 80;
+   static constexpr unsigned fgMaxWidth = 100; ///< Maximum width of the table that Print() displays
 
    VecStr_t fTypes; ///< This attribute stores the type of each column. It is needed by the interpreter to print it.
    std::vector<bool> fIsCollection; ///< True if the column contains a collection. Collections are treated differently
@@ -89,6 +89,8 @@ private:
    size_t fCurrentColumn = 0; ///< Column that is being filled.
 
    size_t fEntries; ///< Number of events to process for each column (i.e. number of rows).
+
+   size_t fNMaxCollectionElements = 10; // threshold on number of elements in collections to be Print()
 
    ////////////////////////////////////////////////////////////////////////////
    /// Appends a cling::printValue call to the stringstream.
@@ -196,6 +198,10 @@ private:
    size_t GetNColumnsToShorten() const;
 
    ////////////////////////////////////////////////////////////////////////////
+   /// Generate dashes between entries in Print() and AsString() Methods
+   std::string DashesBetweenLines(size_t lastColToPrint, bool allColumnsFit) const;
+
+   ////////////////////////////////////////////////////////////////////////////
    /// Adds a row of events to the table
    template <typename... Columns>
    void AddRow(Columns &... columns)
@@ -234,7 +240,7 @@ public:
    /// \param[in] columnNames Columns to print
    /// \param[in] types The type of each column
    /// \param[in] entries How many events per column (row) must be processed.
-   RDisplay(const VecStr_t &columnNames, const VecStr_t &types, int entries);
+   RDisplay(const VecStr_t &columnNames, const VecStr_t &types, int entries, size_t nMaxCollectionElements);
 
    ////////////////////////////////////////////////////////////////////////////
    /// Prints the representation to the standard output

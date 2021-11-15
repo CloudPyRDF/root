@@ -114,7 +114,7 @@ protected:
 
    /// Operations on values of complex types, e.g. ones that involve multiple columns or for which no direct
    /// column type exists.
-   virtual void AppendImpl(const RFieldValue &value);
+   virtual std::size_t AppendImpl(const RFieldValue &value);
    virtual void ReadGlobalImpl(NTupleSize_t globalIndex, RFieldValue *value);
    virtual void ReadInClusterImpl(const RClusterIndex &clusterIndex, RFieldValue *value) {
       ReadGlobalImpl(fPrincipalColumn->GetGlobalIndex(clusterIndex), value);
@@ -197,12 +197,13 @@ public:
    virtual size_t GetAlignment() const { return GetValueSize(); }
 
    /// Write the given value into columns. The value object has to be of the same type as the field.
-   void Append(const RFieldValue& value) {
-      if (!fIsSimple) {
-         AppendImpl(value);
-         return;
-      }
+   /// Returns the number of uncompressed bytes written.
+   std::size_t Append(const RFieldValue& value) {
+      if (!fIsSimple)
+         return AppendImpl(value);
+
       fPrincipalColumn->Append(value.fMappedElement);
+      return value.fMappedElement.GetSize();
    }
 
    /// Populate a single value with data from the tree, which needs to be of the fitting type.
@@ -289,12 +290,29 @@ public:
 /// The field for a class with dictionary
 class RClassField : public Detail::RFieldBase {
 private:
+   enum ESubFieldRole {
+      kBaseClass,
+      kDataMember,
+   };
+   struct RSubFieldInfo {
+      ESubFieldRole fRole;
+      std::size_t fOffset;
+   };
+   /// Prefix used in the subfield names generated for base classes
+   static constexpr const char *kPrefixInherited{":"};
+
    TClass* fClass;
+   /// Additional information kept for each entry in `fSubFields`
+   std::vector<RSubFieldInfo> fSubFieldsInfo;
    std::size_t fMaxAlignment = 1;
+
+private:
+   RClassField(std::string_view fieldName, std::string_view className, TClass *classp);
+   void Attach(std::unique_ptr<Detail::RFieldBase> child, RSubFieldInfo info);
 
 protected:
    std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final;
-   void AppendImpl(const Detail::RFieldValue& value) final;
+   std::size_t AppendImpl(const Detail::RFieldValue& value) final;
    void ReadGlobalImpl(NTupleSize_t globalIndex, Detail::RFieldValue *value) final;
    void ReadInClusterImpl(const RClusterIndex &clusterIndex, Detail::RFieldValue *value) final;
 
@@ -327,7 +345,7 @@ private:
 
 protected:
    std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final;
-   void AppendImpl(const Detail::RFieldValue& value) final;
+   std::size_t AppendImpl(const Detail::RFieldValue& value) final;
    void ReadGlobalImpl(NTupleSize_t globalIndex, Detail::RFieldValue *value) final;
    void ReadInClusterImpl(const RClusterIndex &clusterIndex, Detail::RFieldValue *value) final;
 
@@ -357,7 +375,7 @@ private:
 
 protected:
    std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final;
-   void AppendImpl(const Detail::RFieldValue& value) final;
+   std::size_t AppendImpl(const Detail::RFieldValue& value) final;
    void ReadGlobalImpl(NTupleSize_t globalIndex, Detail::RFieldValue *value) final;
 
 public:
@@ -394,7 +412,7 @@ private:
 
 protected:
    std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final;
-   void AppendImpl(const Detail::RFieldValue& value) final;
+   std::size_t AppendImpl(const Detail::RFieldValue& value) final;
    void ReadGlobalImpl(NTupleSize_t globalIndex, Detail::RFieldValue *value) final;
    void ReadInClusterImpl(const RClusterIndex &clusterIndex, Detail::RFieldValue *value) final;
 
@@ -434,7 +452,7 @@ private:
 
 protected:
    std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final;
-   void AppendImpl(const Detail::RFieldValue& value) final;
+   std::size_t AppendImpl(const Detail::RFieldValue& value) final;
    void ReadGlobalImpl(NTupleSize_t globalIndex, Detail::RFieldValue *value) final;
 
 public:
@@ -1159,7 +1177,7 @@ private:
    std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final {
       return std::make_unique<RField>(newName);
    }
-   void AppendImpl(const ROOT::Experimental::Detail::RFieldValue& value) final;
+   std::size_t AppendImpl(const ROOT::Experimental::Detail::RFieldValue& value) final;
    void ReadGlobalImpl(ROOT::Experimental::NTupleSize_t globalIndex,
                        ROOT::Experimental::Detail::RFieldValue *value) final;
 
@@ -1306,7 +1324,7 @@ protected:
    std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final {
       return std::make_unique<RField>(newName);
    }
-   void AppendImpl(const Detail::RFieldValue& value) final;
+   std::size_t AppendImpl(const Detail::RFieldValue& value) final;
    void ReadGlobalImpl(NTupleSize_t globalIndex, Detail::RFieldValue *value) final;
    void GenerateColumnsImpl() final;
    void GenerateColumnsImpl(const RNTupleDescriptor &desc) final;
@@ -1363,16 +1381,18 @@ protected:
       auto newItemField = fSubFields[0]->Clone(fSubFields[0]->GetName());
       return std::make_unique<RField<ROOT::VecOps::RVec<ItemT>>>(newName, std::move(newItemField));
    }
-   void AppendImpl(const Detail::RFieldValue& value) final {
+   std::size_t AppendImpl(const Detail::RFieldValue& value) final {
       auto typedValue = value.Get<ContainerT>();
+      auto nbytes = 0;
       auto count = typedValue->size();
       for (unsigned i = 0; i < count; ++i) {
          auto itemValue = fSubFields[0]->CaptureValue(&typedValue->data()[i]);
-         fSubFields[0]->Append(itemValue);
+         nbytes += fSubFields[0]->Append(itemValue);
       }
       Detail::RColumnElement<ClusterSize_t, EColumnType::kIndex> elemIndex(&fNWritten);
       fNWritten += count;
       fColumns[0]->Append(elemIndex);
+      return nbytes + sizeof(elemIndex);
    }
    void ReadGlobalImpl(NTupleSize_t globalIndex, Detail::RFieldValue *value) final {
       auto typedValue = value->Get<ContainerT>();
@@ -1413,11 +1433,6 @@ public:
    }
    void DestroyValue(const Detail::RFieldValue& value, bool dtorOnly = false) final {
       auto vec = reinterpret_cast<ContainerT*>(value.GetRawPtr());
-      auto nItems = vec->size();
-      for (unsigned i = 0; i < nItems; ++i) {
-         auto itemValue = fSubFields[0]->CaptureValue(vec->data() + (i * fItemSize));
-         fSubFields[0]->DestroyValue(itemValue, true /* dtorOnly */);
-      }
       vec->~RVec();
       if (!dtorOnly)
          free(vec);
@@ -1455,7 +1470,7 @@ protected:
    std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final {
       return std::make_unique<RField<ROOT::VecOps::RVec<bool>>>(newName);
    }
-   void AppendImpl(const Detail::RFieldValue& value) final {
+   std::size_t AppendImpl(const Detail::RFieldValue& value) final {
       auto typedValue = value.Get<ContainerT>();
       auto count = typedValue->size();
       for (unsigned i = 0; i < count; ++i) {
@@ -1466,6 +1481,7 @@ protected:
       Detail::RColumnElement<ClusterSize_t, EColumnType::kIndex> elemIndex(&fNWritten);
       fNWritten += count;
       fColumns[0]->Append(elemIndex);
+      return count + sizeof(elemIndex);
    }
    void ReadGlobalImpl(NTupleSize_t globalIndex, Detail::RFieldValue *value) final {
       auto typedValue = value->Get<ContainerT>();

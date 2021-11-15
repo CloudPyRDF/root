@@ -14,12 +14,14 @@ ROOT_STANDARD_LIBRARY_PACKAGE(NetxNG
     TNetXNGFile.h
     TNetXNGFileStager.h
     TNetXNGSystem.h
+    ROOT/RRawFileNetXNG.hxx
   SOURCES
     src/TNetXNGFile.cxx
     src/TNetXNGFileStager.cxx
     src/TNetXNGSystem.cxx
+    src/RRawFileNetXNG.cxx
   LIBRARIES
-    ${XROOTD_LIBRARIES}
+    Xrootd::Xrootd
   DEPENDENCIES
     Net
     RIO
@@ -28,6 +30,8 @@ ROOT_STANDARD_LIBRARY_PACKAGE(NetxNG
     XROOTD
 )
 
-target_include_directories(NetxNG PRIVATE ${XROOTD_INCLUDE_DIRS})
+target_include_directories(NetxNG SYSTEM PRIVATE ${XROOTD_INCLUDE_DIRS})
 
 target_compile_options(NetxNG PRIVATE -Wno-shadow)
+
+ROOT_ADD_TEST_SUBDIRECTORY(test)

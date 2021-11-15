@@ -81,6 +81,7 @@ Transformations are a way to manipulate the data.
 |------------------|--------------------|
 | Alias() | Introduce an alias for a particular column name. |
 | Define() | Creates a new column in the dataset. Example usages include adding a column that contains the invariant mass of a particle, or a selection of elements of an array (e.g. only the `pt`s of "good" muons). |
+| DefinePerSample() | Define a new column that is updated when the input sample changes, e.g. when switching tree being processed in a chain. |
 | DefineSlot() | Same as Define(), but the user-defined function must take an extra `unsigned int slot` as its first parameter. `slot` will take a different value, `0` to `nThreads - 1`, for each thread of execution. This is meant as a helper in writing thread-safe Define() transformation when using RDataFrame after ROOT::EnableImplicitMT(). DefineSlot() works just as well with single-thread execution: in that case `slot` will always be `0`.  |
 | DefineSlotEntry() | Same as DefineSlot(), but the entry number is passed in addition to the slot number. This is meant as a helper in case some dependency on the entry number needs to be honoured. |
 | Filter() | Filter rows based on user-defined conditions. |
@@ -531,6 +532,17 @@ sum = df.Filter("Numba::myFilter(x)").Sum("y")
 print(sum.GetValue())
 ~~~
 
+It also works with collections: `RVec` objects of fundamental types can be transparently converted to/from numpy arrays:
+
+~~~{.py}
+@ROOT.Numba.Declare(['RVec<float>', 'int'], 'RVec<float>')
+def pypowarray(x, y):
+    return x**y
+
+df.Define('array', 'ROOT::RVec<float>{1.,2.,3.})\
+  .Define('arraySquared', 'Numba::pypowarray(array, 2)')
+~~~
+
 ### Conversion to numpy arrays
 
 Eventually, you probably would like to inspect the content of the RDataFrame or process the data further
@@ -566,8 +578,8 @@ df.Define("z", "x + y").Snapshot("tree", "file.root")
 RDataFrame applications can be executed in parallel through distributed computing frameworks on a set of remote machines
 thanks to the Python package `ROOT.RDF.Experimental.Distributed`. This experimental, **Python-only** package allows to scale the
 optimized performance RDataFrame can achieve on a single machine to multiple nodes at the same time. It is designed so
-that different backends can be easily plugged in, currently supporting [Apache Spark](http://spark.apache.org/) and soon
-also [Dask](https://dask.org/). To make use of distributed RDataFrame, you only need to switch `ROOT.RDataFrame` with
+that different backends can be easily plugged in, currently supporting [Apache Spark](http://spark.apache.org/) and
+[Dask](https://dask.org/). To make use of distributed RDataFrame, you only need to switch `ROOT.RDataFrame` with
 the backend-specific `RDataFrame` of your choice, for example:
 
 ~~~{.py}
@@ -606,6 +618,11 @@ RDataFrame operations currently work with this package. The subset that is curre
 with support for more operations coming in the future. Data sources other than TTree and TChain (e.g. CSV, RNTuple) are
 currently not supported.
 
+**Note** that the distributed RDataFrame module is available in a ROOT installation if the following criteria are met:
+- PyROOT is available
+- RDataFrame is available
+- The version of the Python interpreter used to build ROOT is greater or equal than 3.7
+
 ### Connecting to a Spark cluster
 
 In order to distribute the RDataFrame workload, you can connect to a Spark cluster you have access to through the
@@ -630,6 +647,35 @@ df = RDataFrame("mytree", "myfile.root", sparkcontext = sc)
 
 If an instance of [SparkContext](https://spark.apache.org/docs/latest/api/python/reference/api/pyspark.SparkContext.html)
 is not provided, the default behaviour is to create one in the background for you.
+
+### Connecting to a Dask cluster
+
+Similarly, you can connect to a Dask cluster by creating your own connection object which internally operates with one
+of the cluster schedulers supported by Dask (more information in the
+[Dask distributed docs](http://distributed.dask.org/en/stable/)):
+
+~~~{.py}
+import ROOT
+from dask.distributed import Client
+
+# Point RDataFrame calls to the Dask specific RDataFrame
+RDataFrame = ROOT.RDF.Experimental.Distributed.Dask.RDataFrame
+
+# In a Python script the Dask client needs to be initalized in a context
+# Jupyter notebooks / Python session don't need this
+if __name__ == "__main__":
+    # With an already setup cluster that exposes a Dask scheduler endpoint
+    client = Client("dask_scheduler.domain.com:8786")
+
+    # The Dask RDataFrame constructor accepts the Dask Client object as an optional argument
+    df = RDataFrame("mytree","myfile.root", daskclient=client)
+    # Proceed as usual
+    df.Define("x","someoperation").Histo1D("x")
+~~~
+
+If an instance of [distributed.Client](http://distributed.dask.org/en/stable/api.html#distributed.Client) is not
+provided to the RDataFrame object, it will be created for you and it will run the computations in the local machine
+using all cores available.
 
 ### Distributed Snapshot
 
@@ -909,7 +955,7 @@ auto min = d2.Filter([](double b2) { return b2 > 0; }, {"b2"}) // we can still s
 ~~~
 
 \anchor helper-cols
-### Special helper columns: `rdfentry_` and `rdfslot_`
+### Special helper columns: rdfentry_ and rdfslot_
 Every instance of RDataFrame is created with two special columns called `rdfentry_` and `rdfslot_`. The `rdfentry_`
 column is of type `ULong64_t` and it holds the current entry number while `rdfslot_` is an `unsigned int`
 holding the index of the current data processing slot.

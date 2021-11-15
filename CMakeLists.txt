@@ -118,7 +118,7 @@ endif()
 
 #---Try to download a file to check internet connection-----------------------------------------
 message(STATUS "Checking internet connectivity...")
-file(DOWNLOAD https://root.cern/files/test.txt ${CMAKE_CURRENT_BINARY_DIR}/test.txt
+file(DOWNLOAD https://root.cern/files/cmake_connectivity_test.txt ${CMAKE_CURRENT_BINARY_DIR}/cmake_connectivity_test.txt
   TIMEOUT 5 STATUS DOWNLOAD_STATUS
 )
 # Get the status code from the download status
@@ -128,7 +128,7 @@ if(${STATUS_CODE} EQUAL 0)
   # Succcess
   message(STATUS "Yes")
   # Now let's delete the file
-  file(REMOVE ${CMAKE_CURRENT_BINARY_DIR}/test.txt)
+  file(REMOVE ${CMAKE_CURRENT_BINARY_DIR}/cmake_connectivity_test.txt)
   set(NO_CONNECTION FALSE)
 else()
   # Error
@@ -619,15 +619,22 @@ if(testing)
       find_package(Git REQUIRED)
 
       if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/.git)
-        execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
+        execute_process(COMMAND ${GIT_EXECUTABLE} for-each-ref --points-at=HEAD --count=1 --format=%\(refname:short\)
                         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                         OUTPUT_VARIABLE GIT_BRANCH OUTPUT_STRIP_TRAILING_WHITESPACE)
       else()
         set(GIT_BRANCH v${ROOT_MAJOR_VERSION}-${ROOT_MINOR_VERSION}-${ROOT_PATCH_VERSION})
       endif()
 
+      # Resolve the `latest-stable` branch to the latest merged head/tag
+      if("${GIT_BRANCH}" STREQUAL "latest-stable")
+        execute_process(COMMAND ${GIT_EXECUTABLE} for-each-ref --points-at=latest-stable^2 --format=%\(refname:short\)
+                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                        OUTPUT_VARIABLE GIT_BRANCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+      endif()
+
       execute_process(COMMAND
-        ${GIT_EXECUTABLE} ls-remote --heads
+        ${GIT_EXECUTABLE} ls-remote --heads --tags
         https://github.com/root-project/roottest.git ${GIT_BRANCH}
         OUTPUT_VARIABLE ROOTTEST_GIT_BRANCH)
 

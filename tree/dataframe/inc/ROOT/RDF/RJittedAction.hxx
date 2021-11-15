@@ -61,7 +61,7 @@ public:
    // Helper for RMergeableValue
    std::unique_ptr<ROOT::Detail::RDF::RMergeableValueBase> GetMergeableValue() const final;
 
-   std::function<void(unsigned int)> GetDataBlockCallback() final;
+   ROOT::RDF::SampleCallback_t GetSampleCallback() final;
 };
 
 } // ns RDF

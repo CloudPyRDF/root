@@ -12,6 +12,7 @@
 #define ROOT_RJITTEDCUSTOMCOLUMN
 
 #include "ROOT/RDF/RDefineBase.hxx"
+#include "ROOT/RDF/RSampleInfo.hxx"
 #include "ROOT/RStringView.hxx"
 #include "RtypesCore.h"
 
@@ -34,7 +35,7 @@ class RJittedDefine : public RDefineBase {
 public:
    RJittedDefine(std::string_view name, std::string_view type, unsigned int nSlots,
                        const std::map<std::string, std::vector<void *>> &DSValuePtrs)
-      : RDefineBase(name, type, nSlots, RDFInternal::RBookedDefines(), DSValuePtrs, nullptr)
+      : RDefineBase(name, type, nSlots, RDFInternal::RBookedDefines(), DSValuePtrs, nullptr, /* columnNames */ {})
    {
    }
 
@@ -44,6 +45,7 @@ public:
    void *GetValuePtr(unsigned int slot) final;
    const std::type_info &GetTypeId() const final;
    void Update(unsigned int slot, Long64_t entry) final;
+   void Update(unsigned int slot, const ROOT::RDF::RSampleInfo &id) final;
    void FinaliseSlot(unsigned int slot) final;
 };
 

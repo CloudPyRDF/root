@@ -22,9 +22,9 @@ public:
    void Exec(unsigned int) { ++(*fNCalls); }
 #else
    void Exec(unsigned int) {}
-   std::function<void(unsigned int)> GetDataBlockCallback() final
+   ROOT::RDF::SampleCallback_t GetSampleCallback() final
    {
-      return [this](unsigned int) mutable { ++(*this->fNCalls); };
+      return [this](unsigned int, const ROOT::RDF::RSampleInfo &) mutable { ++(*this->fNCalls); };
    }
 #endif
    void Finalize() {}

@@ -13,6 +13,9 @@
 
 #include "ROOT/RDF/GraphNode.hxx"
 #include "ROOT/RDF/RBookedDefines.hxx"
+#include "ROOT/RDF/RSampleInfo.hxx"
+#include "ROOT/RDF/Utils.hxx"
+#include "ROOT/RVec.hxx"
 
 #include <deque>
 #include <map>
@@ -35,9 +38,6 @@ class RDefineBase {
 protected:
    const std::string fName; ///< The name of the custom column
    const std::string fType; ///< The type of the custom column as a text string
-   unsigned int fNChildren{0};      ///< number of nodes of the functional graph hanging from this object
-   unsigned int fNStopsReceived{0}; ///< number of times that a children node signaled to stop processing entries.
-   const unsigned int fNSlots;      ///< number of thread slots used by this node, inherited from parent node.
    std::vector<Long64_t> fLastCheckedEntry;
    /// A unique ID that identifies this custom column.
    /// Used e.g. to distinguish custom columns with the same name in different branches of the computation graph.
@@ -46,13 +46,17 @@ protected:
    std::deque<bool> fIsInitialized; // because vector<bool> is not thread-safe
    const std::map<std::string, std::vector<void *>> &fDSValuePtrs; // reference to RLoopManager's data member
    ROOT::RDF::RDataSource *fDataSource; ///< non-owning ptr to the RDataSource, if any. Used to retrieve column readers.
+   const ROOT::RDF::ColumnNames_t fColumnNames;
+   /// The nth flag signals whether the nth input column is a custom column or not.
+   ROOT::RVecB fIsDefine;
 
    static unsigned int GetNextID();
 
 public:
    RDefineBase(std::string_view name, std::string_view type, unsigned int nSlots,
                const RDFInternal::RBookedDefines &defines,
-               const std::map<std::string, std::vector<void *>> &DSValuePtrs, ROOT::RDF::RDataSource *ds);
+               const std::map<std::string, std::vector<void *>> &DSValuePtrs, ROOT::RDF::RDataSource *ds,
+               const ColumnNames_t &columnNames);
 
    RDefineBase &operator=(const RDefineBase &) = delete;
    RDefineBase &operator=(RDefineBase &&) = delete;
@@ -65,6 +69,8 @@ public:
    std::string GetTypeName() const;
    /// Update the value at the address returned by GetValuePtr with the content corresponding to the given entry
    virtual void Update(unsigned int slot, Long64_t entry) = 0;
+   /// Update function to be called once per sample, used if the derived type is a RDefinePerSample
+   virtual void Update(unsigned int /*slot*/, const ROOT::RDF::RSampleInfo &/*id*/) {}
    /// Clean-up operations to be performed at the end of a task.
    virtual void FinaliseSlot(unsigned int slot) = 0;
    /// Return the unique identifier of this RDefineBase.

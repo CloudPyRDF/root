@@ -124,7 +124,7 @@ RooNLLVar::RooNLLVar(const char *name, const char* title, RooAbsPdf& pdf, RooAbs
 /// For internal use.
 
 RooNLLVar::RooNLLVar(const char *name, const char *title, RooAbsPdf& pdf, RooAbsData& indata,
-                     RooAbsTestStatistic::Configuration const& cfg, bool extended) :
+                     bool extended, RooAbsTestStatistic::Configuration const& cfg) :
   RooAbsOptTestStatistic(name,title,pdf,indata,RooArgSet(),cfg),
   _extended(extended),
   _weightSq(kFALSE),
@@ -169,7 +169,7 @@ RooNLLVar::RooNLLVar(const char *name, const char *title, RooAbsPdf& pdf, RooAbs
 
 RooNLLVar::RooNLLVar(const char *name, const char *title, RooAbsPdf& pdf, RooAbsData& indata,
                      const RooArgSet& projDeps,
-                     RooAbsTestStatistic::Configuration const& cfg, bool extended) :
+                     bool extended, RooAbsTestStatistic::Configuration const& cfg) :
   RooAbsOptTestStatistic(name,title,pdf,indata,projDeps, cfg),
   _extended(extended),
   _weightSq(kFALSE),
@@ -229,7 +229,7 @@ RooAbsTestStatistic* RooNLLVar::create(const char *name, const char *title, RooA
   // check if pdf can be extended
   bool extendedPdf = _extended && thePdf.canBeExtended();
 
-  auto testStat = new RooNLLVar(name, title, thePdf, adata, projDeps, cfg, extendedPdf);
+  auto testStat = new RooNLLVar(name, title, thePdf, adata, projDeps, extendedPdf, cfg);
   testStat->batchMode(_batchEvaluations);
   return testStat;
 }
@@ -363,58 +363,7 @@ Double_t RooNLLVar::evaluatePartition(std::size_t firstEvent, std::size_t lastEv
 
     // include the extended maximum likelihood term, if requested
     if(_extended && _setNum==_extSet) {
-      if (_weightSq) {
-
-
-        // Calculate sum of weights-squared here for extended term
-        Double_t sumW2;
-        if (_batchEvaluations) {
-          const RooSpan<const double> eventWeights = _dataClone->getWeightBatch(0, _nEvents);
-          if (eventWeights.empty()) {
-            sumW2 = (lastEvent - firstEvent) * _dataClone->weightSquared();
-          } else {
-            ROOT::Math::KahanSum<double, 4u> kahanWeight;
-            for (std::size_t i = 0; i < eventWeights.size(); ++i) {
-              kahanWeight.AddIndexed(eventWeights[i] * eventWeights[i], i);
-            }
-            sumW2 = kahanWeight.Sum();
-          }
-        } else { // scalar mode
-          ROOT::Math::KahanSum<double> sumW2KahanSum;
-          for (decltype(_dataClone->numEntries()) i = 0; i < _dataClone->numEntries() ; i++) {
-            _dataClone->get(i);
-            sumW2KahanSum += _dataClone->weightSquared();
-          }
-          sumW2 = sumW2KahanSum.Sum();
-        }
-
-        Double_t expected= pdfClone->expectedEvents(_dataClone->get());
-
-        // Adjust calculation of extended term with W^2 weighting: adjust poisson such that
-        // estimate of Nexpected stays at the same value, but has a different variance, rescale
-        // both the observed and expected count of the Poisson with a factor sum[w] / sum[w^2] which is
-        // the effective weight of the Poisson term.
-        // i.e. change Poisson(Nobs = sum[w]| Nexp ) --> Poisson( sum[w] * sum[w] / sum[w^2] | Nexp * sum[w] / sum[w^2] )
-        // weighted by the effective weight  sum[w^2]/ sum[w] in the likelihood.
-        // Since here we compute the likelihood with the weight square we need to multiply by the
-        // square of the effective weight
-        // expectedW = expected * sum[w] / sum[w^2]   : effective expected entries
-        // observedW =  sum[w]  * sum[w] / sum[w^2]   : effective observed entries
-        // The extended term for the likelihood weighted by the square of the weight will be then:
-        //  (sum[w^2]/ sum[w] )^2 * expectedW -  (sum[w^2]/ sum[w] )^2 * observedW * log (expectedW)  and this is
-        //  using the previous expressions for expectedW and observedW
-        //  sum[w^2] / sum[w] * expected - sum[w^2] * log (expectedW)
-        //  and since the weights are constants in the likelihood we can use log(expected) instead of log(expectedW)
-
-        Double_t expectedW2 = expected * sumW2 / _dataClone->sumEntries() ;
-        Double_t extra= expectedW2 - sumW2*log(expected );
-
-        // Double_t extra = pdfClone->extendedTerm(sumW2, _dataClone->get());
-
-        result += extra;
-      } else {
-        result += pdfClone->extendedTerm(_dataClone->sumEntries(), _dataClone->get());
-      }
+      result += pdfClone->extendedTerm(*_dataClone, _weightSq);
     }
   } //unbinned PDF
 
@@ -460,43 +409,51 @@ Double_t RooNLLVar::evaluatePartition(std::size_t firstEvent, std::size_t lastEv
 /// \return Tuple with (Kahan sum of probabilities, carry of kahan sum, sum of weights)
 RooNLLVar::ComputeResult RooNLLVar::computeBatched(std::size_t stepSize, std::size_t firstEvent, std::size_t lastEvent) const
 {
+  auto pdfClone = static_cast<const RooAbsPdf*>(_funcClone);
+  return computeBatchedFunc(pdfClone, _dataClone, _evalData, _normSet, _weightSq, stepSize, firstEvent, lastEvent);
+}
+
+// static function, also used from TestStatistics::RooUnbinnedL
+RooNLLVar::ComputeResult RooNLLVar::computeBatchedFunc(const RooAbsPdf *pdfClone, RooAbsData *dataClone,
+                                                       std::unique_ptr<RooBatchCompute::RunContext> &evalData,
+                                                       RooArgSet *normSet, bool weightSq, std::size_t stepSize,
+                                                       std::size_t firstEvent, std::size_t lastEvent)
+{
   const auto nEvents = lastEvent - firstEvent;
 
   if (stepSize != 1) {
     throw std::invalid_argument(std::string("Error in ") + __FILE__ + ": Step size for batch computations can only be 1.");
   }
 
-  auto pdfClone = static_cast<const RooAbsPdf*>(_funcClone);
-
   // Create a RunContext that will own the memory where computation results are stored.
   // Holding on to this struct in between function calls will make sure that the memory
   // is only allocated once.
-  if (!_evalData) {
-    _evalData.reset(new RooBatchCompute::RunContext);
+  if (!evalData) {
+    evalData.reset(new RooBatchCompute::RunContext);
   }
-  _evalData->clear();
-  _dataClone->getBatches(*_evalData, firstEvent, nEvents);
+  evalData->clear();
+  dataClone->getBatches(*evalData, firstEvent, nEvents);
 
-  auto results = pdfClone->getLogProbabilities(*_evalData, _normSet);
+  auto results = pdfClone->getLogProbabilities(*evalData, normSet);
 
 #ifdef ROOFIT_CHECK_CACHED_VALUES
 
   for (std::size_t evtNo = firstEvent; evtNo < std::min(lastEvent, firstEvent + 10); ++evtNo) {
-    _dataClone->get(evtNo);
-    if (_dataClone->weight() == 0.) // 0-weight events are not cached, so cannot compare against them.
+    dataClone->get(evtNo);
+    if (dataClone->weight() == 0.) // 0-weight events are not cached, so cannot compare against them.
       continue;
 
-    assert(_dataClone->valid());
+    assert(dataClone->valid());
     try {
       // Cross check results with strict tolerance and complain
-      BatchInterfaceAccessor::checkBatchComputation(*pdfClone, *_evalData, evtNo-firstEvent, _normSet, 1.E-13);
+      BatchInterfaceAccessor::checkBatchComputation(*pdfClone, *evalData, evtNo-firstEvent, normSet, 1.E-13);
     } catch (std::exception& e) {
       std::cerr << __FILE__ << ":" << __LINE__ << " ERROR when checking batch computation for event " << evtNo << ":\n"
           << e.what() << std::endl;
 
       // It becomes a real problem if it's very wrong. We fail in this case:
       try {
-        BatchInterfaceAccessor::checkBatchComputation(*pdfClone, *_evalData, evtNo-firstEvent, _normSet, 1.E-9);
+         BatchInterfaceAccessor::checkBatchComputation(*pdfClone, *evalData, evtNo-firstEvent, normSet, 1.E-9);
       } catch (std::exception& e2) {
         assert(false);
       }
@@ -507,19 +464,14 @@ RooNLLVar::ComputeResult RooNLLVar::computeBatched(std::size_t stepSize, std::si
 
 
   // Compute sum of event weights. First check if we need squared weights
-  const RooSpan<const double> eventWeights = _dataClone->getWeightBatch(firstEvent, nEvents);
-  //Capture member for lambda:
-  const bool retrieveSquaredWeights = _weightSq;
-  auto retrieveWeight = [&eventWeights, retrieveSquaredWeights](std::size_t i) {
-    return retrieveSquaredWeights ? eventWeights[i] * eventWeights[i] : eventWeights[i];
-  };
+  const RooSpan<const double> eventWeights = dataClone->getWeightBatch(firstEvent, nEvents, weightSq);
 
   //Sum the event weights and probabilities
   ROOT::Math::KahanSum<double, 4u> kahanProb;
   double uniformSingleEventWeight{0.0};
   double sumOfWeights;
   if (eventWeights.empty()) {
-    uniformSingleEventWeight = retrieveSquaredWeights ? _dataClone->weightSquared() : _dataClone->weight();
+    uniformSingleEventWeight = weightSq ? dataClone->weightSquared() : dataClone->weight();
     sumOfWeights = nEvents * uniformSingleEventWeight;
     for (std::size_t i = 0; i < results.size(); ++i) { //CHECK_VECTORISE
       kahanProb.AddIndexed(-uniformSingleEventWeight * results[i], i);
@@ -528,7 +480,7 @@ RooNLLVar::ComputeResult RooNLLVar::computeBatched(std::size_t stepSize, std::si
     assert(results.size() == eventWeights.size());
     ROOT::Math::KahanSum<double, 4u> kahanWeight;
     for (std::size_t i = 0; i < results.size(); ++i) { //CHECK_VECTORISE
-      const double weight = retrieveWeight(i);
+      const double weight = eventWeights[i];
       kahanProb.AddIndexed(-weight * results[i], i);
       kahanWeight.AddIndexed(weight, i);
     }
@@ -541,7 +493,7 @@ RooNLLVar::ComputeResult RooNLLVar::computeBatched(std::size_t stepSize, std::si
     ROOT::Math::KahanSum<double, 4u> kahanSanitised;
     RooNaNPacker nanPacker;
     for (std::size_t i = 0; i < results.size(); ++i) {
-      double weight = eventWeights.empty() ? uniformSingleEventWeight : retrieveWeight(i);
+      double weight = eventWeights.empty() ? uniformSingleEventWeight : eventWeights[i];
 
       if (weight == 0.)
         continue;
@@ -567,21 +519,28 @@ RooNLLVar::ComputeResult RooNLLVar::computeBatched(std::size_t stepSize, std::si
 
 RooNLLVar::ComputeResult RooNLLVar::computeScalar(std::size_t stepSize, std::size_t firstEvent, std::size_t lastEvent) const {
   auto pdfClone = static_cast<const RooAbsPdf*>(_funcClone);
+  return computeScalarFunc(pdfClone, _dataClone, _normSet, _weightSq, stepSize, firstEvent, lastEvent);
+}
 
+// static function, also used from TestStatistics::RooUnbinnedL
+RooNLLVar::ComputeResult RooNLLVar::computeScalarFunc(const RooAbsPdf *pdfClone, RooAbsData *dataClone,
+                                                      RooArgSet *normSet, bool weightSq, std::size_t stepSize,
+                                                      std::size_t firstEvent, std::size_t lastEvent)
+{
   ROOT::Math::KahanSum<double> kahanWeight;
   ROOT::Math::KahanSum<double> kahanProb;
   RooNaNPacker packedNaN(0.f);
 
   for (auto i=firstEvent; i<lastEvent; i+=stepSize) {
-    _dataClone->get(i) ;
+    dataClone->get(i) ;
 
-    if (!_dataClone->valid()) continue;
+    if (!dataClone->valid()) continue;
 
-    Double_t eventWeight = _dataClone->weight(); //FIXME
+    Double_t eventWeight = dataClone->weight(); //FIXME
     if (0. == eventWeight * eventWeight) continue ;
-    if (_weightSq) eventWeight = _dataClone->weightSquared() ;
+    if (weightSq) eventWeight = dataClone->weightSquared() ;
 
-    const double term = -eventWeight * pdfClone->getLogVal(_normSet);
+    const double term = -eventWeight * pdfClone->getLogVal(normSet);
 
     kahanWeight.Add(eventWeight);
     kahanProb.Add(term);

@@ -98,13 +98,13 @@ JSROOT.define(['d3'], (d3) => {
          'oCourier New', 'bCourier New', 'boCourier New',
          'Symbol', 'Times New Roman', 'Wingdings', 'iSymbol',
          'Verdana', 'iVerdana', 'bVerdana', 'biVerdana'],
-      // taken from https://www.math.utah.edu/~beebe/fonts/afm-widths.html
-      root_fonts_aver_width: [0.537, 0.510,
-         0.535, 0.520, 0.537,
-         0.54, 0.556, 0.56, 0.6,
-         0.6, 0.6, 0.6,
-         0.587, 0.514, 0.896, 0.587,
-         0.55, 0.55, 0.55, 0.55 ]
+      // taken from symbols.html, counted only for letters and digits
+    root_fonts_aver_width: [0.5778,0.5314,
+         0.5809, 0.5540, 0.5778,
+         0.5783,0.6034,0.6030,0.6003,
+         0.6004,0.6003,0.6005,
+         0.5564,0.5521,0.5664,0.5564,
+         0.5664,0.5495,0.5748,0.5578]
    };
 
    jsrp.createMenu = function(evnt, handler, menuname) {
@@ -892,7 +892,7 @@ JSROOT.define(['d3'], (d3) => {
 
       if (color_as_svg) {
          this.color = color;
-         indx = d3.color(color).hex().substr(1); // fictional index produced from color code
+         if (color != "none") indx = d3.color(color).hex().substr(1); // fictional index produced from color code
       } else {
          this.color = painter ? painter.getColor(indx) : jsrp.getColor(indx);
       }
@@ -907,7 +907,7 @@ JSROOT.define(['d3'], (d3) => {
          return true;
       }
 
-      if (!svg || svg.empty() || (this.pattern < 3000)) return false;
+      if (!svg || svg.empty() || (this.pattern < 3000) || (this.color == "none")) return false;
 
       let id = "pat_" + this.pattern + "_" + indx,
          defs = svg.select('.canvas_defs');
@@ -1098,7 +1098,7 @@ JSROOT.define(['d3'], (d3) => {
       if (fontIndex !== null) {
 
          let indx = Math.floor(fontIndex / 10),
-             fontName = jsrp.root_fonts[indx] || "";
+             fontName = jsrp.root_fonts[indx] || "Arial";
 
          while (fontName.length > 0) {
             if (fontName[0] === 'b')
@@ -1121,7 +1121,7 @@ JSROOT.define(['d3'], (d3) => {
          this.name = name;
          this.style = style || null;
          this.weight = weight || null;
-         this.aver_width = 0.55;
+         this.aver_width = this.weight ? 0.58 : 0.55;
       }
 
       this.func = this.setFont.bind(this);
@@ -1179,9 +1179,22 @@ JSROOT.define(['d3'], (d3) => {
                .attr("font-style", null);
    }
 
-   /** @summary required for reasonable scaling of text in node.js
-     * @returns approximate width of given label */
-   FontHandler.prototype.approxTextWidth = function(label) { return label.length * this.size * this.aver_width; }
+   /** @summary Returns true in case of monospace font
+     * @private */
+   FontHandler.prototype.isMonospace = function() {
+      let n = this.name.toLowerCase();
+      return (n.indexOf("courier") == 0) || (n == "monospace") || (n == "monaco");
+   }
+
+   /** @summary Return full font declaration which can be set as font property like "12pt Arial bold"
+     * @private */
+   FontHandler.prototype.getFontHtml = function() {
+      let res = Math.round(this.size) + "pt " + this.name;
+      if (this.weight) res += " " + this.weight;
+      if (this.style) res += " " + this.style;
+      return res;
+   }
+
 
   // ===========================================================================
 
@@ -1264,15 +1277,13 @@ JSROOT.define(['d3'], (d3) => {
      * @private */
    jsrp.buildSvgPath = function(kind, bins, height, ndig) {
 
-      let smooth = kind.indexOf("bezier") >= 0;
+      const smooth = kind.indexOf("bezier") >= 0;
 
       if (ndig === undefined) ndig = smooth ? 2 : 0;
       if (height === undefined) height = 0;
 
-      function jsroot_d3_svg_lineSlope(p0, p1) {
-         return (p1.gry - p0.gry) / (p1.grx - p0.grx);
-      }
-      function jsroot_d3_svg_lineFiniteDifferences(points) {
+      const jsroot_d3_svg_lineSlope = (p0, p1) => (p1.gry - p0.gry) / (p1.grx - p0.grx);
+      const jsroot_d3_svg_lineFiniteDifferences = points => {
          let i = 0, j = points.length - 1, m = [], p0 = points[0], p1 = points[1], d = m[0] = jsroot_d3_svg_lineSlope(p0, p1);
          while (++i < j) {
             p0 = p1; p1 = points[i + 1];
@@ -1280,8 +1291,8 @@ JSROOT.define(['d3'], (d3) => {
          }
          m[i] = d;
          return m;
-      }
-      function jsroot_d3_svg_lineMonotoneTangents(points) {
+      };
+      const jsroot_d3_svg_lineMonotoneTangents = points => {
          let d, a, b, s, m = jsroot_d3_svg_lineFiniteDifferences(points), i = -1, j = points.length - 1;
          while (++i < j) {
             d = jsroot_d3_svg_lineSlope(points[i], points[i + 1]);
@@ -1304,12 +1315,12 @@ JSROOT.define(['d3'], (d3) => {
             points[i].dgrx = s || 0;
             points[i].dgry = m[i] * s || 0;
          }
-      }
+      };
 
       let res = { path: "", close: "" }, bin = bins[0], maxy = Math.max(bin.gry, height + 5),
          currx = Math.round(bin.grx), curry = Math.round(bin.gry), dx, dy, npnts = bins.length;
 
-      function conv(val) {
+      const conv = val => {
          let vvv = Math.round(val);
          if ((ndig == 0) || (vvv === val)) return vvv.toString();
          let str = val.toFixed(ndig);
@@ -1319,7 +1330,7 @@ JSROOT.define(['d3'], (d3) => {
             str = str.substr(0, str.length - 1);
          if (str == "-0") str = "0";
          return str;
-      }
+      };
 
       res.path = ((kind[0] == "L") ? "L" : "M") + conv(bin.grx) + "," + conv(bin.gry);
 
@@ -1329,26 +1340,44 @@ JSROOT.define(['d3'], (d3) => {
 
       if (smooth) {
          // build smoothed curve
-         res.path += "c" + conv(bin.dgrx) + "," + conv(bin.dgry) + ",";
+         res.path += "C" + conv(bin.grx+bin.dgrx) + "," + conv(bin.gry+bin.dgry) + ",";
          for (let n = 1; n < npnts; ++n) {
             let prev = bin;
             bin = bins[n];
-            if (n > 1) res.path += "s";
-            res.path += conv(bin.grx - bin.dgrx - prev.grx) + "," + conv(bin.gry - bin.dgry - prev.gry) + "," + conv(bin.grx - prev.grx) + "," + conv(bin.gry - prev.gry);
+            if (n > 1) res.path += "S";
+            res.path += conv(bin.grx - bin.dgrx) + "," + conv(bin.gry - bin.dgry) + "," + conv(bin.grx) + "," + conv(bin.gry);
             maxy = Math.max(maxy, prev.gry);
          }
       } else if (npnts < 10000) {
          // build simple curve
+
+         let acc_x = 0, acc_y = 0;
+
+         const flush = () => {
+            if (acc_x) { res.path += "h" + acc_x; acc_x = 0; }
+            if (acc_y) { res.path += "v" + acc_y; acc_y = 0; }
+         };
+
          for (let n = 1; n < npnts; ++n) {
             bin = bins[n];
             dx = Math.round(bin.grx) - currx;
             dy = Math.round(bin.gry) - curry;
-            if (dx && dy) res.path += "l" + dx + "," + dy;
-            else if (!dx && dy) res.path += "v" + dy;
-            else if (dx && !dy) res.path += "h" + dx;
+            if (dx && dy) {
+               flush();
+               res.path += "l" + dx + "," + dy;
+            } else if (!dx && dy) {
+               if ((acc_y === 0) || ((dy < 0) !== (acc_y < 0))) flush();
+               acc_y += dy;
+            } else if (dx && !dy) {
+               if ((acc_x === 0) || ((dx < 0) !== (acc_x < 0))) flush();
+               acc_x += dx;
+            }
             currx += dx; curry += dy;
             maxy = Math.max(maxy, curry);
          }
+
+         flush();
+
       } else {
          // build line with trying optimize many vertical moves
          let lastx, lasty, cminy = curry, cmaxy = curry, prevy = curry;
@@ -1373,8 +1402,10 @@ JSROOT.define(['d3'], (d3) => {
                curry = prevy;
             }
             dy = lasty - curry;
-            if (dy) res.path += "l" + dx + "," + dy;
-            else res.path += "h" + dx;
+            if (dy)
+               res.path += "l" + dx + "," + dy;
+            else
+               res.path += "h" + dx;
             currx = lastx; curry = lasty;
             prevy = cminy = cmaxy = lasty;
          }
@@ -1384,12 +1415,10 @@ JSROOT.define(['d3'], (d3) => {
             res.path += "v" + (cmaxy - cminy);
             if (cmaxy != prevy) res.path += "v" + (prevy - cmaxy);
          }
-
       }
 
       if (height > 0)
-         res.close = "L" + conv(bin.grx) + "," + conv(maxy) +
-            "h" + conv(bins[0].grx - bin.grx) + "Z";
+         res.close = "L" + conv(bin.grx) + "," + conv(maxy) + "h" + conv(bins[0].grx - bin.grx) + "Z";
 
       return res;
    }
@@ -1406,12 +1435,12 @@ JSROOT.define(['d3'], (d3) => {
       if (JSROOT.nodejs && (sizearg != 'bbox'))
          return { x: 0, y: 0, width: parseInt(elem.attr("width")), height: parseInt(elem.attr("height")) };
 
-      function styleValue(name) {
+      const styleValue = name => {
          let value = elem.style(name);
          if (!value || (typeof value !== 'string')) return 0;
          value = parseFloat(value.replace("px", ""));
          return !Number.isFinite(value) ? 0 : Math.round(value);
-      }
+      };
 
       let rect = elem.node().getBoundingClientRect();
       if ((sizearg == 'bbox') && (parseFloat(rect.width) > 0))
@@ -1849,17 +1878,19 @@ JSROOT.define(['d3'], (d3) => {
      * @desc if options are not modified - returns original string which was specified for object draw */
    ObjectPainter.prototype.getDrawOpt = function() {
       if (!this.options) return "";
-      let changed = false;
-      if (!this.options_store) {
-         changed  = true;
-      } else {
-         for (let k in this.options)
-            if (this.options[k] !== this.options_store[k])
-               changed = true;
-      }
 
-      if (changed && typeof this.options.asString == "function")
-         return this.options.asString();
+      if (typeof this.options.asString == "function") {
+         let changed = false, pp = this.getPadPainter();
+         if (!this.options_store || (pp && pp._interactively_changed)) {
+            changed  = true;
+         } else {
+            for (let k in this.options)
+               if (this.options[k] !== this.options_store[k])
+                  changed = true;
+         }
+         if (changed)
+            return this.options.asString(this.isMainPainter(), pp ? pp.getRootPad() : null);
+      }
 
       return this.options.original || ""; // nothing better, return original draw option
    }
@@ -2279,7 +2310,6 @@ JSROOT.define(['d3'], (d3) => {
       return true;
    }
 
-
    /** @summary Creates marker attributes object
      * @desc Can be used to produce markers in painter.
      * See {@link JSROOT.TAttMarkerHandler} for more info.
@@ -2676,6 +2706,50 @@ JSROOT.define(['d3'], (d3) => {
          if (trans) txt.attr("transform", trans);
       });
 
+      // finally process TLatex drawings
+      all_args.forEach(arg => {
+         if (!arg.txt_g) return;
+         any_text = true;
+         let txt_g = arg.txt_g;
+         delete arg.txt_g;
+         txt_g.attr('visibility', null);
+
+         let box = arg.text_rect;
+
+         if (arg.width) {
+            // adjust x position when scale into specified rectangle
+            if (arg.align[0] == "middle") arg.x += arg.width / 2; else
+               if (arg.align[0] == "end") arg.x += arg.width;
+         }
+
+         arg.dx = arg.dy = 0;
+
+         let scale = (f > 0) && (Math.abs(1-f)>0.01) ? 1/f : 1;
+
+         arg.dx = ((arg.align[0] == "middle") ? -0.5 : ((arg.align[0] == "end") ? -1 : 0)) * box.width * scale;
+
+         if (arg.height) {
+            if (arg.align[1].indexOf('bottom') === 0) arg.y += arg.height; else
+               if (arg.align[1] == 'middle') arg.y += arg.height / 2;
+         }
+
+         if (arg.align[1] == 'top')
+            arg.dy = -box.y1*scale;
+         else if (arg.align[1] == 'bottom')
+            arg.dy = -box.y2*scale;
+         else if (arg.align[1] == 'middle')
+            arg.dy = -0.5*(box.y1 + box.y2)*scale;
+
+         if (!arg.rotate) { arg.x += arg.dx; arg.y += arg.dy; arg.dx = arg.dy = 0; }
+
+         let trans = (arg.x || arg.y) ? "translate(" + Math.round(arg.x) + "," + Math.round(arg.y) + ")" : "";
+         if (arg.rotate) trans += " rotate(" + Math.round(arg.rotate) + ")";
+         if (scale !== 1) trans += ` scale(${scale.toFixed(3)})`;
+         if (arg.dx || arg.dy) trans += " translate(" + Math.round(arg.dx) + "," + Math.round(arg.dy) + ")";
+         if (trans) txt_g.attr("transform", trans);
+      });
+
+
       // when no any normal text drawn - remove font attributes
       if (!any_text)
          font.clearFont(draw_g);
@@ -2692,7 +2766,7 @@ JSROOT.define(['d3'], (d3) => {
    function _postprocessText(painter, txt_node, arg) {
       // complete rectangle with very rougth size estimations
       arg.box = !JSROOT.nodejs && !JSROOT.settings.ApproxTextSize && !arg.fast ? jsrp.getElementRect(txt_node, 'bbox') :
-               (arg.text_rect || { height: arg.font_size * 1.2, width: arg.font.approxTextWidth(arg.text) });
+               (arg.text_rect || { height: arg.font_size * 1.2, width: arg.text.length * arg.font_size * arg.font.aver_width });
 
       txt_node.attr('visibility', 'hidden'); // hide elements until text drawing is finished
 
@@ -2759,7 +2833,7 @@ JSROOT.define(['d3'], (d3) => {
             align[1] = 'bottom-base';
          else if ((arg.align % 10) == 3)
             align[1] = 'top';
-      } else if (arg.align && (typeof arg.align == 'object') && arg.align.length == 2) {
+      } else if (arg.align && (typeof arg.align == 'object') && (arg.align.length == 2)) {
          align = arg.align;
       }
 
@@ -2809,12 +2883,19 @@ JSROOT.define(['d3'], (d3) => {
 
          if (!arg.plain || arg.simple_latex) {
             JSROOT.require(['latex']).then(ltx => {
-               if (arg.simple_latex)
+               if (arg.simple_latex || ltx.isPlainText(arg.text)) {
+                  arg.simple_latex = true;
                   ltx.producePlainText(this, arg.txt_node, arg);
-               else
-                  ltx.produceLatex(this, arg.txt_node, arg);
+               } else if (JSROOT.settings.Latex === JSROOT.constants.Latex.Old) {
+                  ltx.produceOldLatex(this, arg.txt_node, arg);
+               } else {
+                  arg.txt_node.remove(); // just remove text node,
+                  delete arg.txt_node;
+                  arg.txt_g = arg.draw_g.append("svg:g");
+                  ltx.produceLatex(this, arg.txt_g, arg);
+               }
                arg.ready = true;
-               _postprocessText(this, arg.txt_node, arg);
+               _postprocessText(this, arg.txt_g || arg.txt_node, arg);
 
                if (arg.draw_g.property('draw_text_completed'))
                   _checkAllTextDrawing(this, arg.draw_g); // check if all other elements are completed
@@ -3057,6 +3138,57 @@ JSROOT.define(['d3'], (d3) => {
       }, this._user_tooltip_timeout);
    }
 
+   /** @summary Provide projection areas
+     * @param kind - "X", "Y" or ""
+     * @private */
+   ObjectPainter.prototype.provideSpecialDrawArea = function(kind) {
+      if (kind == this._special_draw_area)
+         return Promise.resolve(true);
+
+      return this.getCanvPainter().toggleProjection(kind).then(() => {
+         this._special_draw_area = kind;
+         return true;
+      });
+   }
+
+   /** @summary Provide projection areas
+     * @param kind - "X", "Y" or ""
+     * @private */
+   ObjectPainter.prototype.drawInSpecialArea = function(obj, opt) {
+      let canp = this.getCanvPainter();
+      if (!this._special_draw_area || !canp || typeof canp.drawProjection !== "function")
+         return Promise.resolve(false);
+
+      return canp.drawProjection(this._special_draw_area, obj, opt);
+   }
+
+   /** @summary Get tooltip for painter and specified event position
+     * @param {Object} evnt - object wiith clientX and clientY positions
+     * @private */
+   ObjectPainter.prototype.getToolTip = function(evnt) {
+      if (!evnt || (evnt.clientX === undefined) || (evnt.clientY === undefined)) return null;
+
+      let frame = this.getFrameSvg();
+      if (frame.empty()) return null;
+      let layer = frame.select(".main_layer");
+      if (layer.empty()) return null;
+
+      let pos = d3.pointer(evnt, layer.node());
+      let pnt = { touch: false, x: pos[0], y: pos[1] };
+
+      if (typeof this.extractToolTip == 'function')
+         return this.extractToolTip(pnt);
+
+      pnt.disabled = true;
+
+      let res = null;
+
+      if (typeof this.processTooltipEvent == 'function')
+         res = this.processTooltipEvent(pnt);
+
+      return res && res.user_info ? res.user_info : res;
+   }
+
    // ===========================================================
 
 
@@ -3282,11 +3414,30 @@ JSROOT.define(['d3'], (d3) => {
             if (factor>10) factor = 10; else if (factor<0.01) factor = 0.01;
             item.min = item.min / Math.pow(10, factor*delta_left*dmin);
             item.max = item.max * Math.pow(10, factor*delta_right*(1-dmin));
+         } else if ((delta_left === -delta_right) && !item.reverse) {
+            // shift left/right, try to keep range constant
+            let delta = (item.max - item.min) * delta_right * dmin;
+
+            if ((Math.round(item.max) === item.max) && (Math.round(item.min) === item.min) && (Math.abs(delta) > 1)) delta = Math.round(delta);
+
+            if (item.min + delta < gmin)
+               delta = gmin - item.min;
+            else if (item.max + delta > gmax)
+               delta = gmax - item.max;
+
+            if (delta != 0) {
+               item.min += delta;
+               item.max += delta;
+             } else {
+               delete item.min;
+               delete item.max;
+            }
+
          } else {
             let rx_left = (item.max - item.min), rx_right = rx_left;
-            if (delta_left>0) rx_left = 1.001 * rx_left / (1-delta_left);
+            if (delta_left > 0) rx_left = 1.001 * rx_left / (1-delta_left);
             item.min += -delta_left*dmin*rx_left;
-            if (delta_right>0) rx_right = 1.001 * rx_right / (1-delta_right);
+            if (delta_right > 0) rx_right = 1.001 * rx_right / (1-delta_right);
             item.max -= -delta_right*(1-dmin)*rx_right;
          }
          if (item.min >= item.max) {
@@ -3702,6 +3853,13 @@ JSROOT.define(['d3'], (d3) => {
      * @private */
    jsrp.canDraw = function(classname) {
       return getDrawSettings("ROOT." + classname).opts !== null;
+   }
+
+   /** @summary Set default draw option for provided class */
+   jsrp.setDefaultDrawOpt = function(classname, opt) {
+      let handle = getDrawHandle("ROOT." + classname, 0);
+      if (handle)
+         handle.dflt = opt;
    }
 
    /** @summary Draw object in specified HTML element with given draw options.

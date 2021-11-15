@@ -104,7 +104,7 @@
 
    /** @summary JSROOT version date
      * @desc Release date in format day/month/year like "14/01/2021"*/
-   JSROOT.version_date = "13/07/2021";
+   JSROOT.version_date = "5/11/2021";
 
    /** @summary JSROOT version id and date
      * @desc Produced by concatenation of {@link JSROOT.version_id} and {@link JSROOT.version_date}
@@ -139,7 +139,7 @@
    let browser = { isOpera: false, isFirefox: true, isSafari: false, isChrome: false, isWin: false, touches: false  };
 
    if ((typeof document !== "undefined") && (typeof window !== "undefined")) {
-      let script = document.currentScript;
+      const script = document.currentScript;
       if (script && (typeof script.src == "string")) {
          const pos = script.src.indexOf("scripts/JSRoot.core.");
          if (pos >= 0) {
@@ -166,8 +166,8 @@
          'jqueryui-mousewheel'  : { src: 'jquery.mousewheel', onlymin: true, extract: "$", dep: 'jquery-ui' },
          'jqueryui-touch-punch' : { src: 'touch-punch', onlymin: true, extract: "$", dep: 'jquery-ui' },
          'rawinflate'           : { src: 'rawinflate', libs: true },
-         'zstd-codec'           : { src: '../../zstd/zstd-codec.min', extract: "ZstdCodec", node: "zstd-codec" },
-         'mathjax'              : { src: 'https://cdn.jsdelivr.net/npm/mathjax@3.1.2/es5/tex-svg', extract: "MathJax", node: "mathjax" },
+         'zstd-codec'           : { src: '../../zstd/zstd-codec', onlymin: true, alt: "https://root.cern/js/zstd/zstd-codec.min.js", extract: "ZstdCodec", node: "zstd-codec" },
+         'mathjax'              : { src: '../../mathjax/3.2.0/es5/tex-svg', nomin: true,  alt: 'https://cdn.jsdelivr.net/npm/mathjax@3.2.0/es5/tex-svg.js', extract: "MathJax", node: "mathjax" },
          'dat.gui'              : { src: 'dat.gui', libs: true, extract: "dat" },
          'three'                : { src: 'three', libs: true, extract: "THREE", node: "three" },
          'threejs_jsroot'       : { src: 'three.extra', libs: true }
@@ -181,11 +181,12 @@
       if (entry.src.indexOf('http') == 0)
          return _.amd ? entry.src : entry.src + ".js";
 
+      // WARNING, with sap mathjax and zstd-codec loaded directly from alternative location
       if (_.sap)
-         return "jsroot/scripts/" + entry.src + ((_.source_min || entry.libs || entry.onlymin) ? ".min" : "");
+         return entry.alt || "jsroot/scripts/" + entry.src + ((_.source_min || entry.libs || entry.onlymin) && !entry.nomin ? ".min" : "");
 
       let dir = (entry.libs && _.use_full_libs && !_.source_min) ? JSROOT.source_dir + "libs/" : JSROOT.source_dir + "scripts/",
-          ext = (_.source_min || (entry.libs && !_.use_full_libs) || entry.onlymin) ? ".min" : "";
+          ext = (_.source_min || (entry.libs && !_.use_full_libs) || entry.onlymin) && !entry.nomin ? ".min" : "";
       if (_.amd) return dir + entry.src + ext;
       let res = dir + entry.src + ext + ".js";
 
@@ -254,21 +255,26 @@
         * @private */
       Latex: {
          /** @summary do not use Latex at all for text drawing */
-         Off: 0,
+         Off: 0, ///
          /** @summary convert only known latex symbols */
          Symbols: 1,
-         /** @summary normal latex processing */
+         /** @summary normal latex processing with svg */
          Normal: 2,
          /** @summary use MathJax for complex cases, otherwise simple SVG text */
          MathJax: 3,
          /** @summary always use MathJax for text rendering */
          AlwaysMathJax: 4,
+         /** @summary old latex processing with tspan */
+         Old: 5,
          fromString: function(s) {
             if (!s || (typeof s !== 'string'))
                return this.Normal;
             switch(s){
                case "off": return this.Off;
                case "symbols": return this.Symbols;
+               case "old": return this.Old;
+               case "exp":
+               case "experimental": return this.Normal;
                case "MathJax":
                case "mathjax":
                case "math": return this.MathJax;
@@ -277,7 +283,7 @@
                case "alwaysmathjax": return this.AlwaysMathJax;
             }
             let code = parseInt(s);
-            return (Number.isInteger(code) && (code >= this.Off) && (code <= this.AlwaysMathJax)) ? code : this.Normal;
+            return (Number.isInteger(code) && (code >= this.Off) && (code <= this.Old)) ? code : this.Normal;
          }
       }
    };
@@ -533,8 +539,8 @@
          return Promise.resolve(arr.length == 1 ? arr[0] : arr);
       }
 
-      // loading with sap.ui.require - but not mathjax
-      if (_.sap && (need[0] != "mathjax")) {
+      // loading with sap.ui.require - but not mathjax or zstd
+      if (_.sap && (need[0] != "mathjax") && (need[0] != "zstd-codec")) {
          let req = [], reqindx = [], res = [];
          for (let k = 0; k < need.length; ++k) {
             let m = _.modules[need[k]];
@@ -587,10 +593,21 @@
             let separ = (typeof thisSrc == 'string') ? thisSrc.indexOf('?') : -1;
             if (separ > 0) thisSrc = thisSrc.substr(0, separ);
             thisModule = thisSrc;
-            for (let mod in _.sources)
-               if (_.get_module_src(_.sources[mod]) == thisSrc) {
+            for (let mod in _.sources) {
+               let entry = _.sources[mod];
+               if (entry.not_jsroot && thisSrc) {
+                  let indx = thisSrc.indexOf(entry.src);
+                  if ((indx >= 0) && (entry.src.length + indx == thisSrc.length)) {
+                     let m = _.modules[mod];
+                     if (m && m.loading) m.ingore_first_finish = true;
+                     thisModule = mod;
+                     break;
+
+                  }
+               } else if (_.get_module_src(entry) == thisSrc) {
                   thisModule = mod; break;
                }
+            }
          }
          if (!thisModule)
             throw Error("Cannot define module for " + (thisSrc || "uncknown script"));
@@ -602,6 +619,12 @@
          // check if promise was returned
          if (res && (typeof res == 'object') && (typeof res.then == 'function'))
             return res.then(pres => finish_loading(m, pres));
+
+         // this is special case of non-jsroot modules, completion will be performed after factoryFunc
+         if (m.ingore_first_finish && m.waiting) {
+            delete m.ingore_first_finish;
+            return;
+         }
 
          m.module = res || 1; // just to have some value
          let waiting = m.waiting;
@@ -651,7 +674,11 @@
 
          if (!m.jsroot || m.extract)
             element.onload = () => finish_loading(m, m.extract ? globalThis[m.extract] : 1); // mark script loaded
-         element.onerror = () => { element.remove(); m.failure = true; req.failed(); }
+         element.onerror = () => {
+            element.remove();
+            if (m.alt) { m.src = m.alt; delete m.alt; load_module(req, m); }
+                  else { m.failure = true; req.failed(); }
+         }
       }
 
       function after_depend_load(req,d,m) {
@@ -673,8 +700,11 @@
                      failed: function(msg) { this.processed = true; if (this.reject) this.reject(Error(msg || "JSROOT.require failed")); } };
 
          if (req.factoryFunc && req.thisModule) {
-            if (!(_.modules[req.thisModule]))
+            if (!(_.modules[req.thisModule])) {
+               console.log('Introducing module', req.thisModule, 'need', need)
+
                _.modules[req.thisModule] = { jsroot: true, src: thisSrc, loading: true };
+            }
          }
 
          for (let k = 0; k < need.length; ++k) {
@@ -686,18 +716,21 @@
                let jsmodule = _.sources[need[k]];
 
                m = _.modules[need[k]] = {};
-               if (jsmodule) {
+               if (jsmodule && !jsmodule.not_jsroot) {
                   m.jsroot = true;
                   m.src = _.get_module_src(jsmodule, true);
                   m.extract = jsmodule.extract;
                   m.dep = jsmodule.dep; // copy dependence
+                  m.alt = jsmodule.alt; // alternative location
               } else {
                   m.src = need[k];
+                  // create entry in sources
+                  _.sources[need[k]] = { not_jsroot: true, src: need[k] };
                }
             }
 
             if (m.failure)
-               // module loading failed, no nee to continue
+               // module loading failed, no need to continue
                return req.failed(`Loading of module ${need[k]} failed`);
 
             if (m.dep) {
@@ -724,15 +757,13 @@
          if (!handler && !any_dep)
             return handle_func(req, true);
 
-         srcs.forEach(m => load_module(req,m));
+         srcs.forEach(m => load_module(req, m));
       }
 
       if (factoryFunc)
          analyze();
       else
-         return new Promise(function(resolve,reject) {
-            analyze(resolve,reject);
-         });
+         return new Promise((resolve,reject) => analyze(resolve,reject));
    }
 
    /** @summary Central method to load JSROOT functionality

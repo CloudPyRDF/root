@@ -5,8 +5,8 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
 
    "use strict";
 
-   let createDefaultPalette = () => {
-      let hue2rgb = (p, q, t) => {
+   const createDefaultPalette = () => {
+      const hue2rgb = (p, q, t) => {
          if (t < 0) t += 1;
          if (t > 1) t -= 1;
          if (t < 1 / 6) return p + (q - p) * 6 * t;
@@ -14,35 +14,36 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          if (t < 2 / 3) return p + (q - p) * (2/3 - t) * 6;
          return p;
       };
-      let HLStoRGB = (h, l, s) => {
-         let q = (l < 0.5) ? l * (1 + s) : l + s - l * s,
-             p = 2 * l - q,
-             r = hue2rgb(p, q, h + 1/3),
-             g = hue2rgb(p, q, h),
-             b = hue2rgb(p, q, h - 1/3);
+      const HLStoRGB = (h, l, s) => {
+         const q = (l < 0.5) ? l * (1 + s) : l + s - l * s,
+               p = 2 * l - q,
+               r = hue2rgb(p, q, h + 1/3),
+               g = hue2rgb(p, q, h),
+               b = hue2rgb(p, q, h - 1/3);
          return 'rgb(' + Math.round(r*255) + ',' + Math.round(g*255) + ',' + Math.round(b*255) + ')';
       };
-      let palette = [], minHue = 0, maxHue = 280, maxPretty = 50;
+      const minHue = 0, maxHue = 280, maxPretty = 50;
+      let palette = [];
       for (let i = 0; i < maxPretty; ++i) {
-         let hue = (maxHue - (i + 1) * ((maxHue - minHue) / maxPretty)) / 360;
+         const hue = (maxHue - (i + 1) * ((maxHue - minHue) / maxPretty)) / 360;
          palette.push(HLStoRGB(hue, 0.5, 1));
       }
       return new JSROOT.ColorPalette(palette);
-   }
+   };
 
-   let createGrayPalette = () => {
+   const createGrayPalette = () => {
       let palette = [];
       for (let i = 0; i < 50; ++i) {
-         let code = Math.round((i+2)/60*255);
+         const code = Math.round((i+2)/60*255);
          palette.push('rgb('+code+','+code+','+code+')');
       }
       return new JSROOT.ColorPalette(palette);
-   }
+   };
 
    /** @summary Create color palette
      * @memberof JSROOT.Painter
      * @private */
-   function getColorPalette(id) {
+   const getColorPalette = id => {
       id = id || JSROOT.settings.Palette;
       if ((id > 0) && (id < 10)) return createGrayPalette();
       if (id < 51) return createDefaultPalette();
@@ -183,9 +184,9 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
 
       for (let g = 1; g < stops.length; g++) {
           // create the colors...
-          let nColorsGradient = Math.round(Math.floor(NColors*stops[g]) - Math.floor(NColors*stops[g-1]));
+          const nColorsGradient = Math.round(Math.floor(NColors*stops[g]) - Math.floor(NColors*stops[g-1]));
           for (let c = 0; c < nColorsGradient; c++) {
-             let col = Math.round(Red[g-1] + c * (Red[g] - Red[g-1]) / nColorsGradient) + "," +
+             const col = Math.round(Red[g-1] + c * (Red[g] - Red[g-1]) / nColorsGradient) + "," +
                        Math.round(Green[g-1] + c * (Green[g] - Green[g-1]) / nColorsGradient) + "," +
                        Math.round(Blue[g-1] + c * (Blue[g] - Blue[g-1]) / nColorsGradient);
              palette.push("rgb("+col+")");
@@ -193,7 +194,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
        }
 
        return new JSROOT.ColorPalette(palette);
-   }
+   };
 
    // ============================================================
 
@@ -326,7 +327,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
       if ((brd > 1) && (pt.fShadowColor > 0) && !pt.fNpaves && (dx || dy)) {
          let spath = "", scol = this.getColor(pt.fShadowColor);
          if (this.fillatt.empty()) {
-            if ((dx<0) && (dy<0))
+            if ((dx < 0) && (dy < 0))
                spath = "M0,0v"+(height-brd)+"h-"+brd+"v-"+height+"h"+width+"v"+brd;
             else // ((dx<0) && (dy>0))
                spath = "M0,"+height+"v-"+(height-brd)+"h-"+brd+"v"+height+"h"+width+"v-"+brd;
@@ -348,10 +349,11 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
                .call(this.fillatt.func)
                .call(this.lineatt.func);
 
-      let rect = this.draw_g.append("svg:path")
-                     .attr("d", "M0,0h"+width + "v"+height + "h-"+width + "z")
-                     .call(this.fillatt.func)
-                     .call(this.lineatt.func);
+      const rect = this.draw_g
+                       .append("svg:path")
+                       .attr("d", "M0,0H"+width + "V"+height + "H0Z")
+                       .call(this.fillatt.func)
+                       .call(this.lineatt.func);
 
       if (typeof this.paveDrawFunc == 'function')
          promise = this.paveDrawFunc(width, height, arg);
@@ -579,22 +581,17 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
                lx2 = lx2 ? Math.round(lx2*width) : width;
                ly1 = ly1 ? Math.round((1-ly1)*height) : ytext;
                ly2 = ly2 ? Math.round((1-ly2)*height) : ytext;
+
                if (entry._typename == "TLine") {
                   let lineatt = new JSROOT.TAttLineHandler(entry);
-                  text_g.append("svg:line")
-                        .attr("x1", lx1)
-                        .attr("y1", ly1)
-                        .attr("x2", lx2)
-                        .attr("y2", ly2)
+                  text_g.append("svg:path")
+                        .attr("d", `M${lx1},${ly1}L${lx2},${ly2}`)
                         .call(lineatt.func);
                } else {
                   let fillatt = this.createAttFill(entry);
 
-                  text_g.append("svg:rect")
-                      .attr("x", lx1)
-                      .attr("y", ly2)
-                      .attr("width", lx2-lx1)
-                      .attr("height", ly1-ly2)
+                  text_g.append("svg:path")
+                      .attr("d", `M${lx1},${ly1}H${lx2}V${ly2}H${lx1}Z`)
                       .call(fillatt.func);
                }
                break;
@@ -695,16 +692,13 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          while ((nrows-1)*ncols >= nlines) nrows--;
       }
 
-      function isEmpty(entry) {
-         return !entry.fObject && !entry.fOption && (!entry.fLabel || (entry.fLabel == " "));
-      }
+      const isEmpty = entry => !entry.fObject && !entry.fOption && (!entry.fLabel || (entry.fLabel == " "));
 
-      if (ncols == 1) {
-         for (let ii=0;ii<nlines;++ii)
+      if (ncols == 1)
+         for (let ii = 0; ii < nlines; ++ii)
             if (isEmpty(legend.fPrimitives.arr[ii])) nrows--;
-      }
 
-      if (nrows<1) nrows = 1;
+      if (nrows < 1) nrows = 1;
 
       let tcolor = this.getColor(legend.fTextColor),
           column_width = Math.round(w/ncols),
@@ -740,6 +734,11 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
              mo = leg.fObject,
              painter = null, isany = false;
 
+         const draw_fill = lopt.indexOf('f') != -1,
+               draw_line = lopt.indexOf('l') != -1,
+               draw_error = lopt.indexOf('e') != -1,
+               draw_marker = lopt.indexOf('p') != -1;
+
          if ((mo !== null) && (typeof mo == 'object')) {
             if ('fLineColor' in mo) o_line = mo;
             if ('fFillColor' in mo) o_fill = mo;
@@ -749,7 +748,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          }
 
          // Draw fill pattern (in a box)
-         if (lopt.indexOf('f') != -1) {
+         if (draw_fill) {
             let fillatt = (painter && painter.fillatt) ? painter.fillatt : this.createAttFill(o_fill);
 
             // box total height is yspace*0.7
@@ -768,32 +767,23 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
             }
          }
 
-         // Draw line (also when error specified)
-         if (lopt.indexOf('l') != -1 || lopt.indexOf('e') != -1) {
+         // Draw line and error (when specified)
+         if (draw_line || draw_error) {
             let lineatt = (painter && painter.lineatt) ? painter.lineatt : new JSROOT.TAttLineHandler(o_line);
-            this.draw_g.append("svg:line")
-               .attr("x1", x0 + padding_x)
-               .attr("y1", mid_y)
-               .attr("x2", tpos_x - padding_x)
-               .attr("y2", mid_y)
+            this.draw_g.append("svg:path")
+               .attr("d", `M${x0 + padding_x},${mid_y}H${tpos_x - padding_x}`)
                .call(lineatt.func);
-            if (lineatt.color !== 'none') isany = true;
-         }
 
-         // Draw error
-         if (lopt.indexOf('e') != -1) {
-            let lineatt = (painter && painter.lineatt) ? painter.lineatt : new JSROOT.TAttLineHandler(o_line);
-            this.draw_g.append("svg:line")
-                .attr("x1", mid_x)
-                .attr("y1", Math.round(pos_y+step_y*0.1))
-                .attr("x2", mid_x)
-                .attr("y2", Math.round(pos_y+step_y*0.9))
-                .call(lineatt.func);
+            if (draw_error)
+               this.draw_g.append("svg:path")
+                   .attr("d", `M${mid_x},${Math.round(pos_y+step_y*0.1)}V${Math.round(pos_y+step_y*0.9)}`)
+                   .call(lineatt.func);
+
             if (lineatt.color !== 'none') isany = true;
          }
 
          // Draw Polymarker
-         if (lopt.indexOf('p') != -1) {
+         if (draw_marker) {
             let marker = (painter && painter.markeratt) ? painter.markeratt : new JSROOT.TAttMarkerHandler(o_marker);
             this.draw_g
                 .append("svg:path")
@@ -813,8 +803,10 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
                        .call(painter.lineatt.func);
 
          let pos_x = tpos_x;
-         if (lopt.length>0) any_opt = true;
-                       else if (!any_opt) pos_x = x0 + padding_x;
+         if (lopt.length > 0)
+            any_opt = true;
+         else if (!any_opt)
+            pos_x = x0 + padding_x;
 
          if (leg.fLabel)
             this.drawText({ align: legend.fTextAlign, x: pos_x, y: pos_y, width: x0+column_width-pos_x-padding_x, height: step_y, text: leg.fLabel, color: tcolor });
@@ -1422,7 +1414,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
               AutoColor: false, NoStat: false, ForceStat: false, PadStats: false, PadTitle: false, AutoZoom: false,
               HighRes: 0, Zero: true, Palette: 0, BaseLine: false,
               Optimize: JSROOT.settings.OptimizeDraw,
-              Mode3D: false,
+              Mode3D: false, x3dscale: 1, y3dscale: 1,
               Render3D: JSROOT.constants.Render3D.Default,
               FrontBox: true, BackBox: true,
               _pmc: false, _plc: false, _pfc: false, need_fillcol: false,
@@ -1447,11 +1439,10 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
 
       if (d.check('PAL', true)) this.Palette = d.partAsInt();
       // this is zooming of histo content
-      if (d.check('MINIMUM:', true)) this.minimum = parseFloat(d.part); else this.minimum = histo.fMinimum;
-      if (d.check('MAXIMUM:', true)) this.maximum = parseFloat(d.part); else this.maximum = histo.fMaximum;
-      // this is actual range of data - used by graph drawing
-      if (d.check('YMIN:', true)) this.ymin = parseFloat(d.part);
-      if (d.check('YMAX:', true)) this.ymax = parseFloat(d.part);
+      if (d.check('MINIMUM:', true)) { this.ominimum = true; this.minimum = parseFloat(d.part); }
+                                else { this.ominimum = false; this.minimum = histo.fMinimum; }
+      if (d.check('MAXIMUM:', true)) { this.omaximum = true; this.maximum = parseFloat(d.part); }
+                                else { this.omaximum = false; this.maximum = histo.fMaximum; }
 
       // let configure histogram titles - only for debug purposes
       if (d.check('HTITLE:', true)) histo.fTitle = decodeURIComponent(d.part.toLowerCase());
@@ -1477,6 +1468,9 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
       if (d.check("SYMLOGX", true)) this.SymlogX = d.partAsInt(0, 3);
       if (d.check("SYMLOGY", true)) this.SymlogY = d.partAsInt(0, 3);
 
+      if (d.check('X3DSC', true)) this.x3dscale = d.partAsInt(0, 100) / 100;
+      if (d.check('Y3DSC', true)) this.y3dscale = d.partAsInt(0, 100) / 100;
+
       let lx = false, ly = false;
       if (d.check('LOGXY')) lx = ly = true;
       if (d.check('LOGX')) lx = true;
@@ -1498,7 +1492,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
             if (jsrp.getColor(col).toUpperCase() === d.part)
                return col;
          return -1;
-      }
+      };
 
       if (d.check('FILL_', true)) {
          let col = getColor();
@@ -1710,7 +1704,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
    }
 
    /** @summary Tries to reconstruct string with hist draw options */
-   THistDrawOptions.prototype.asString = function() {
+   THistDrawOptions.prototype.asString = function(is_main_hist, pad) {
       let res = "";
       if (this.Mode3D) {
 
@@ -1725,6 +1719,9 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          }
          if (!this.FrontBox) res+="FB";
          if (!this.BackBox) res+="BB";
+
+         if (this.x3dscale !== 1) res += "_X3DSC" + Math.round(this.x3dscale * 100);
+         if (this.y3dscale !== 1) res += "_Y3DSC" + Math.round(this.y3dscale * 100);
 
       } else {
          if (this.Scat) {
@@ -1755,8 +1752,26 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
             if (this.TextAngle) res += this.TextAngle;
             res += this.TextKind;
          }
-
       }
+
+      if (is_main_hist && res) {
+
+         if (this.ForceStat || (this.StatEnabled === true))
+            res += "_STAT";
+         else if (this.NoStat || (this.StatEnabled === false))
+            res += "_NOSTAT";
+      }
+
+      if (is_main_hist && pad && res) {
+         if (pad.fLogx) res += "_LOGX";
+         if (pad.fLogy) res += "_LOGY";
+         if (pad.fLogz) res += "_LOGZ";
+         if (pad.fGridx) res += "_GRIDX";
+         if (pad.fGridy) res += "_GRIDY";
+         if (pad.fTickx) res += "_TICKX";
+         if (pad.fTicky) res += "_TICKY";
+      }
+
       return res;
    }
 
@@ -2264,6 +2279,9 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
             this.decodeOptions(opt || histo.fOption);
       }
 
+      if (!this.options.ominimum) this.options.minimum = histo.fMinimum;
+      if (!this.options.omaximum) this.options.maximum = histo.fMaximum;
+
       if (this.snapid || !fp || !fp.zoomChangedInteractive())
          this.checkPadRange();
 
@@ -2509,6 +2527,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
 
       if (statpainter) {
          statpainter.Enabled = !statpainter.Enabled;
+         this.options.StatEnabled = statpainter.Enabled; // used only for interactive
          // when stat box is drawn, it always can be drawn individually while it
          // should be last for colz redrawPad is used
          statpainter.redraw();
@@ -2694,7 +2713,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
       // TAxis object of histogram, where user range can be stored
       if (taxis) {
          if ((taxis.fFirst === taxis.fLast) || !taxis.TestBit(JSROOT.EAxisBits.kAxisRange) ||
-             ((taxis.fFirst<=1) && (taxis.fLast>=nbin))) taxis = undefined;
+             ((taxis.fFirst <= 1) && (taxis.fLast >= nbin))) taxis = undefined;
       }
 
       if (side == "left") {
@@ -2715,27 +2734,26 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
 
       if (!histo) return false;
 
-      let UnzoomTAxis = obj => {
-         if (!obj) return false;
-         if (!obj.TestBit(JSROOT.EAxisBits.kAxisRange)) return false;
+      let unzoomTAxis = obj => {
+         if (!obj || !obj.TestBit(JSROOT.EAxisBits.kAxisRange)) return false;
          if (obj.fFirst === obj.fLast) return false;
          if ((obj.fFirst <= 1) && (obj.fLast >= obj.fNbins)) return false;
          obj.InvertBit(JSROOT.EAxisBits.kAxisRange);
          return true;
-      }
+      };
 
-      let UzoomMinMax = ndim => {
-         if (this.getDimension()!==ndim) return false;
+      let uzoomMinMax = ndim => {
+         if (this.getDimension() !== ndim) return false;
          if ((this.options.minimum===-1111) && (this.options.maximum===-1111)) return false;
          if (!this.draw_content) return false; // if not drawing content, not change min/max
          this.options.minimum = this.options.maximum = -1111;
          this.scanContent(true); // to reset ymin/ymax
          return true;
-      }
+      };
 
-      if (dox && UnzoomTAxis(histo.fXaxis)) res = true;
-      if (doy && (UnzoomTAxis(histo.fYaxis) || UzoomMinMax(1))) res = true;
-      if (doz && (UnzoomTAxis(histo.fZaxis) || UzoomMinMax(2))) res = true;
+      if (dox && unzoomTAxis(histo.fXaxis)) res = true;
+      if (doy && (unzoomTAxis(histo.fYaxis) || uzoomMinMax(1))) res = true;
+      if (doz && (unzoomTAxis(histo.fZaxis) || uzoomMinMax(2))) res = true;
 
       return res;
    }
@@ -2759,9 +2777,9 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
           taxis = histo ? histo['f'+arg+"axis"] : null;
       if (!taxis) return;
 
-      let curr = "[1," + taxis.fNbins+"]";
+      let curr = "[1," + taxis.fNbins + "]";
       if (taxis.TestBit(JSROOT.EAxisBits.kAxisRange))
-          curr = "[" +taxis.fFirst+"," + taxis.fLast+"]";
+          curr = "[" + taxis.fFirst +"," + taxis.fLast +"]";
 
       menu.input(`Enter user range for axis ${arg} like [1,${taxis.fNbins}]`, curr).then(res => {
          if (!res) return;
@@ -3298,8 +3316,8 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          if (args.rounding) res.grx[i] = Math.round(res.grx[i]);
 
          if (args.use3d) {
-            if (res.grx[i] < -pmain.size_xy3d) { res.i1 = i; res.grx[i] = -pmain.size_xy3d; }
-            if (res.grx[i] > pmain.size_xy3d) { res.i2 = i; res.grx[i] = pmain.size_xy3d; }
+            if (res.grx[i] < -pmain.size_x3d) { res.i1 = i; res.grx[i] = -pmain.size_x3d; }
+            if (res.grx[i] > pmain.size_x3d) { res.i2 = i; res.grx[i] = pmain.size_x3d; }
          }
       }
 
@@ -3315,8 +3333,8 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          if (args.rounding) res.gry[j] = Math.round(res.gry[j]);
 
          if (args.use3d) {
-            if (res.gry[j] < -pmain.size_xy3d) { res.j1 = j; res.gry[j] = -pmain.size_xy3d; }
-            if (res.gry[j] > pmain.size_xy3d) { res.j2 = j; res.gry[j] = pmain.size_xy3d; }
+            if (res.gry[j] < -pmain.size_y3d) { res.j1 = j; res.gry[j] = -pmain.size_y3d; }
+            if (res.gry[j] > pmain.size_y3d) { res.j2 = j; res.gry[j] = pmain.size_y3d; }
          }
       }
 
@@ -3472,7 +3490,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
       if ((this.nbinsx == 0) || ((Math.abs(hmin) < 1e-300) && (Math.abs(hmax) < 1e-300)))
          this.draw_content = false;
 
-      let set_zoom = false, set_zoom2 = false;
+      let set_zoom = false;
 
       if (this.draw_content) {
          if (hmin >= hmax) {
@@ -3485,10 +3503,6 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
             if ((this.ymin < 0) && (hmin >= 0)) this.ymin = 0;
             this.ymax = hmax + dy;
          }
-      } else if (this.options.ymin !== this.options.ymax) {
-         this.ymin = this.options.ymin;
-         this.ymax = this.options.ymax;
-         set_zoom2 = true;
       }
 
       hmin = this.options.minimum;
@@ -3502,7 +3516,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          }
       }
 
-      if ((hmin != -1111) && (hmax != -1111) && !this.draw_content && !set_zoom2) {
+      if ((hmin != -1111) && (hmax != -1111) && !this.draw_content) {
          this.ymin = hmin;
          this.ymax = hmax;
       } else {
@@ -3553,7 +3567,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
             w = histo.getBinContent(i + 1);
          }
 
-         if ((xmax===null) || (w>wmax)) { xmax = xx; wmax = w; }
+         if ((xmax === null) || (w > wmax)) { xmax = xx; wmax = w; }
 
          stat_sumw += w;
          stat_sumwx += w * xx;
@@ -3561,7 +3575,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
       }
 
       // when no range selection done, use original statistic from histogram
-      if (!fp.isAxisZoomed("x") && (histo.fTsumw>0)) {
+      if (!fp.isAxisZoomed("x") && (histo.fTsumw > 0)) {
          stat_sumw = histo.fTsumw;
          stat_sumwx = histo.fTsumwx;
          stat_sumwx2 = histo.fTsumwx2;
@@ -3925,7 +3939,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          }
          path_err += "M" + midx + "," + (my-yerr1+dend) + endy + "v" + (yerr1+yerr2-2*dend) + endy;
          if (hints_err !== null)
-         hints_err += "M" + (midx-edx) + "," + (my-yerr1) + "h" + (2*edx) + "v" + (yerr1+yerr2) + "h" + (-2*edx) + "z";
+            hints_err += "M" + (midx-edx) + "," + (my-yerr1) + "h" + (2*edx) + "v" + (yerr1+yerr2) + "h" + (-2*edx) + "z";
       };
 
       let draw_bin = bin => {
@@ -4087,9 +4101,9 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
                    .attr("pointer-events", "visibleFill");
 
          if ((path_line !== null) && (path_line.length > 0)) {
-            if (!this.fillatt.empty())
+            if (!this.fillatt.empty() && !draw_hist)
                this.draw_g.append("svg:path")
-                     .attr("d", (this.options.Fill ? path_line : res) + close_path)
+                     .attr("d", path_line + close_path)
                      .attr("stroke", "none")
                      .call(this.fillatt.func);
 
@@ -4312,7 +4326,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          }
       }
 
-      if (findbin!==null) {
+      if (findbin !== null) {
          // if bin on boundary found, check that x position is ok
          if ((findbin === left) && (grx1 > pnt_x + gapx))  findbin = null; else
          if ((findbin === right-1) && (grx2 < pnt_x - gapx)) findbin = null; else
@@ -4615,7 +4629,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
      * @private */
    TH2Painter.prototype.toggleProjection = function(kind, width) {
 
-      if ((kind=="Projections") || (kind=="Off")) kind = "";
+      if ((kind == "Projections") || (kind == "Off")) kind = "";
 
       if ((typeof kind == 'string') && (kind.length>1)) {
           width = parseInt(kind.substr(1));
@@ -4624,7 +4638,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
 
       if (!width) width = 1;
 
-      if (kind && (this.is_projection==kind)) {
+      if (kind && (this.is_projection == kind)) {
          if (this.projection_width === width) {
             kind = "";
          } else {
@@ -4636,22 +4650,18 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
       delete this.proj_hist;
 
       let new_proj = (this.is_projection === kind) ? "" : kind;
-      this.is_projection = ""; // disable projection redraw until callback
       this.projection_width = width;
+      this.is_projection = ""; // avoid projection handling until area is created
 
-      this.getCanvPainter().toggleProjection(new_proj).then(() => this.redrawProjection("toggling", new_proj));
+      this.provideSpecialDrawArea(new_proj).then(() => { this.is_projection = new_proj; return this.redrawProjection(); });
    }
 
    /** @summary Redraw projection
      * @private */
    TH2Painter.prototype.redrawProjection = function(ii1, ii2, jj1, jj2) {
-      if (ii1 === "toggling") {
-         this.is_projection = ii2;
-         ii1 = ii2 = undefined;
-      }
       if (!this.is_projection) return;
 
-      if (jj2 == undefined) {
+      if (jj2 === undefined) {
          if (!this.tt_handle) return;
          ii1 = Math.round((this.tt_handle.i1 + this.tt_handle.i2)/2); ii2 = ii1+1;
          jj1 = Math.round((this.tt_handle.j1 + this.tt_handle.j2)/2); jj2 = jj1+1;
@@ -4684,21 +4694,38 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          }
       }
 
+
+      let first = 0, last = -1;
       if (this.is_projection == "X") {
-         for (let i=0;i<this.nbinsx;++i) {
-            let sum=0;
-            for (let j=jj1;j<jj2;++j) sum += histo.getBinContent(i+1,j+1);
+         for (let i = 0; i < this.nbinsx; ++i) {
+            let sum = 0;
+            for (let j = jj1; j < jj2; ++j) sum += histo.getBinContent(i+1,j+1);
             this.proj_hist.setBinContent(i+1, sum);
          }
+         if (this.tt_handle) { first = this.tt_handle.i1+1; last = this.tt_handle.i2; }
       } else {
-         for (let j=0;j<this.nbinsy;++j) {
+         for (let j = 0; j < this.nbinsy; ++j) {
             let sum = 0;
-            for (let i=ii1;i<ii2;++i) sum += histo.getBinContent(i+1,j+1);
+            for (let i = ii1; i < ii2; ++i) sum += histo.getBinContent(i+1,j+1);
             this.proj_hist.setBinContent(j+1, sum);
          }
+         if (this.tt_handle) { first = this.tt_handle.j1+1; last = this.tt_handle.j2; }
       }
 
-      return canp.drawProjection(this.is_projection, this.proj_hist);
+      if (first < last) {
+         let axis = this.proj_hist.fXaxis
+         axis.fFirst = first;
+         axis.fLast = last;
+
+         if (((axis.fFirst==1) && (axis.fLast==axis.fNbins)) == axis.TestBit(JSROOT.EAxisBits.kAxisRange))
+            axis.InvertBit(JSROOT.EAxisBits.kAxisRange);
+      }
+
+      // reset statistic before display
+      this.proj_hist.fEntries = 0;
+      this.proj_hist.fTsumw = 0;
+
+      return this.drawInSpecialArea(this.proj_hist);
    }
 
    /** @summary Execute TH2 menu command
@@ -4989,7 +5016,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
 
                if ((xside != 1) || (yside != 1)) continue;
 
-               if ((cond!=null) && !cond(xx,yy)) continue;
+               if (cond && !cond(xx,yy)) continue;
 
                if ((res.wmax===null) || (zz>res.wmax)) { res.wmax = zz; res.xmax = xx; res.ymax = yy; }
 
@@ -5090,57 +5117,83 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
    /** @summary Draw TH2 bins as colors
      * @private */
    TH2Painter.prototype.drawBinsColor = function() {
-      let histo = this.getHisto(),
-          handle = this.prepareColorDraw(),
-          cntr = this.getContour(),
-          palette = this.getHistPalette(),
-          entries = [],
-          skip_zero = !this.options.Zero,
-          show_empty = this._show_empty_bins;
+      const histo = this.getHisto(),
+            handle = this.prepareColorDraw(),
+            cntr = this.getContour(),
+            palette = this.getHistPalette(),
+            entries = [],
+            skip_zero = !this.options.Zero,
+            show_empty = this._show_empty_bins,
+            can_merge = (handle.ybar2 === 1) && (handle.ybar1 === 0);
+
+      let dx, dy, x1, y1, binz, is_zero, colindx, last_entry = null;
+
+      const flush_last_entry = () => {
+         last_entry.path += "h"+dx + "v"+last_entry.dy + "h"+(-dx) + "z";
+         last_entry.dy = 0;
+         last_entry = null;
+      };
 
       // now start build
       for (let i = handle.i1; i < handle.i2; ++i) {
 
-         let dx = handle.grx[i+1] - handle.grx[i],
-             x1 = Math.round(handle.grx[i] + dx*handle.xbar1);
-         dx = Math.round(dx*(handle.xbar2-handle.xbar1)) || 1;
+         dx = handle.grx[i+1] - handle.grx[i];
+         x1 = Math.round(handle.grx[i] + dx*handle.xbar1);
+         dx = Math.round(dx*(handle.xbar2 - handle.xbar1)) || 1;
 
          for (let j = handle.j1; j < handle.j2; ++j) {
-            let binz = histo.getBinContent(i + 1, j + 1),
-                is_zero = (binz === 0);
-            if (is_zero && skip_zero) continue;
+            binz = histo.getBinContent(i + 1, j + 1);
+            is_zero = (binz === 0);
 
-            let colindx = cntr.getPaletteIndex(palette, binz);
-            if (colindx === null) {
-               if (is_zero && show_empty)
-                  colindx = 0;
-                else
-                   continue;
+            if (is_zero && skip_zero) {
+               if (last_entry) flush_last_entry();
+               continue;
             }
 
-            let dy = handle.gry[j] - handle.gry[j+1],
-                y2 = Math.round(handle.gry[j+1] + dy*handle.ybar1);
-            dy = Math.round(dy*(handle.ybar2-handle.ybar1)) || 1;
+            colindx = cntr.getPaletteIndex(palette, binz);
+            if (colindx === null) {
+               if (is_zero && show_empty) {
+                  colindx = 0;
+                } else {
+                   if (last_entry) flush_last_entry();
+                   continue;
+                }
+            }
 
-            let cmd1 = "M"+x1+","+y2,
+            dy = handle.gry[j+1] - handle.gry[j];
+            y1 = Math.round(handle.gry[j] + dy*handle.ybar1);
+            dy = Math.round(dy*(handle.ybar2 - handle.ybar1)) || 1;
+
+            let cmd1 = "M"+x1+","+y1,
                 entry = entries[colindx];
             if (!entry) {
                entry = entries[colindx] = { path: cmd1 };
+            } else if (can_merge && (entry === last_entry)) {
+               entry.dy += dy;
+               continue;
             } else {
-               let cmd2 = "m" + (x1-entry.x) + "," + (y2-entry.y);
+               let cmd2 = "m" + (x1-entry.x) + "," + (y1-entry.y);
                entry.path += (cmd2.length < cmd1.length) ? cmd2 : cmd1;
             }
+            if (last_entry) flush_last_entry();
+
             entry.x = x1;
-            entry.y = y2;
-            entry.path += "v"+dy + "h"+dx + "v"+(-dy) + "z";
+            entry.y = y1;
+
+            if (can_merge) {
+               entry.dy = dy;
+               last_entry = entry;
+            } else {
+               entry.path += "h"+dx + "v"+dy + "h"+(-dx) + "z";
+            }
          }
+         if (last_entry) flush_last_entry();
       }
 
       entries.forEach((entry,colindx) => {
         if (entry)
            this.draw_g
                .append("svg:path")
-               .attr("palette-index", colindx)
                .attr("fill", palette.getColor(colindx))
                .attr("d", entry.path);
       });
@@ -5536,7 +5589,7 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
    /** @summary Create poly bin
      * @private */
    TH2Painter.prototype.createPolyBin = function(pmain, funcs, bin, text_pos) {
-      let cmd = "", ngr, ngraphs = 1, gr = null;
+      let cmd = "", acc_x = 0, acc_y = 0, ngr, ngraphs = 1, gr = null;
 
       if (bin.fPoly._typename == 'TMultiGraph')
          ngraphs = bin.fPoly.fGraphs.arr.length;
@@ -5546,42 +5599,54 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
       if (text_pos)
          bin._sumx = bin._sumy = bin._suml = 0;
 
-      function addPoint(x1,y1,x2,y2) {
-         let len = Math.sqrt((x1-x2)*(x1-x2) + (y1-y2)*(y1-y2));
+      const addPoint = (x1,y1,x2,y2) => {
+         const len = Math.sqrt((x1-x2)*(x1-x2) + (y1-y2)*(y1-y2));
          bin._sumx += (x1+x2)*len/2;
          bin._sumy += (y1+y2)*len/2;
          bin._suml += len;
       }
 
+      const flush = () => {
+         if (acc_x) { cmd += "h" + acc_x; acc_x = 0; }
+         if (acc_y) { cmd += "v" + acc_y; acc_y = 0; }
+      }
+
       for (ngr = 0; ngr < ngraphs; ++ ngr) {
          if (!gr || (ngr>0)) gr = bin.fPoly.fGraphs.arr[ngr];
 
-         let npnts = gr.fNpoints, n,
-             x = gr.fX, y = gr.fY,
+         const x = gr.fX, y = gr.fY;
+         let n, nextx, nexty, npnts = gr.fNpoints, dx, dy,
              grx = Math.round(funcs.grx(x[0])),
-             gry = Math.round(funcs.gry(y[0])),
-             nextx, nexty;
+             gry = Math.round(funcs.gry(y[0]));
 
-         if ((npnts>2) && (x[0]==x[npnts-1]) && (y[0]==y[npnts-1])) npnts--;
+         if ((npnts > 2) && (x[0] === x[npnts-1]) && (y[0] === y[npnts-1])) npnts--;
 
          cmd += "M"+grx+","+gry;
 
-         for (n=1;n<npnts;++n) {
+         for (n = 1; n < npnts; ++n) {
             nextx = Math.round(funcs.grx(x[n]));
             nexty = Math.round(funcs.gry(y[n]));
             if (text_pos) addPoint(grx,gry, nextx, nexty);
-            if ((grx!==nextx) || (gry!==nexty)) {
-               if (grx === nextx)
-                  cmd += "v" + (nexty - gry);
-               else if (gry === nexty)
-                  cmd += "h" + (nextx - grx);
-               else
-                  cmd += "l" + (nextx - grx) + "," + (nexty - gry);
+            dx = nextx - grx;
+            dy = nexty - gry;
+            if (dx || dy) {
+               if (dx === 0) {
+                  if ((acc_y === 0) || ((dy < 0) !== (acc_y < 0))) flush();
+                  acc_y += dy;
+               } else if (dy === 0) {
+                  if ((acc_x === 0) || ((dx < 0) !== (acc_x < 0))) flush();
+                  acc_x += dx;
+               } else {
+                  flush();
+                  cmd += "l" + dx + "," + dy;
+               }
+
+               grx = nextx; gry = nexty;
             }
-            grx = nextx; gry = nexty;
          }
 
          if (text_pos) addPoint(grx, gry, Math.round(funcs.grx(x[0])), Math.round(funcs.gry(y[0])));
+         flush();
          cmd += "z";
       }
 
@@ -5640,11 +5705,10 @@ JSROOT.define(['d3', 'painter', 'gpad'], (d3, jsrp) => {
          if (this.options.Text && bin.fContent) textbins.push(bin);
       }
 
-      for (colindx=0;colindx<colPaths.length;++colindx)
+      for (colindx = 0; colindx < colPaths.length; ++colindx)
          if (colPaths[colindx]) {
             item = this.draw_g
                      .append("svg:path")
-                     .attr("palette-index", colindx)
                      .attr("fill", colindx ? this.fPalette.getColor(colindx) : 'none')
                      .attr("d", colPaths[colindx]);
             if (this.options.Line)

@@ -215,6 +215,8 @@ RooDataSet::RooDataSet() : _wgtVar(0)
 ///     <td> Interpret the given variable as event weight rather than as observable
 /// <tr><td> StoreError(const RooArgSet&)     <td> Store symmetric error along with value for given subset of observables
 /// <tr><td> StoreAsymError(const RooArgSet&) <td> Store asymmetric error along with value for given subset of observables
+/// <tr><td> `GlobalObservables(const RooArgSet&)` <td> Define the set of global observables to be stored in this RooDataSet.
+///                                                     A snapshot of the passed RooArgSet is stored, meaning the values wont't change unexpectedly.
 /// </table>
 ///
 
@@ -245,6 +247,7 @@ RooDataSet::RooDataSet(std::string_view name, std::string_view title, const RooA
   pc.defineObject("dummy2","LinkDataSliceMany",0) ;
   pc.defineSet("errorSet","StoreError",0) ;
   pc.defineSet("asymErrSet","StoreAsymError",0) ;
+  pc.defineSet("glObs","GlobalObservables",0,0) ;
   pc.defineMutex("ImportTree","ImportData","ImportDataSlice","LinkDataSlice","ImportFromFile") ;
   pc.defineMutex("CutSpec","CutVar") ;
   pc.defineMutex("WeightVarName","WeightVar") ;
@@ -265,6 +268,8 @@ RooDataSet::RooDataSet(std::string_view name, std::string_view title, const RooA
     assert(0) ;
     return ;
   }
+
+  if(pc.getSet("glObs")) setGlobalObservables(*pc.getSet("glObs"));
 
   // Extract relevant objects
   TTree* impTree = static_cast<TTree*>(pc.getObject("impTree")) ;
@@ -1014,8 +1019,35 @@ Double_t RooDataSet::weightSquared() const
 
 ////////////////////////////////////////////////////////////////////////////////
 /// \see RooAbsData::getWeightBatch().
-RooSpan<const double> RooDataSet::getWeightBatch(std::size_t first, std::size_t len) const {
-  return _dstore->getWeightBatch(first, len);
+RooSpan<const double> RooDataSet::getWeightBatch(std::size_t first, std::size_t len, bool sumW2 /*=false*/) const {
+
+  std::size_t nEntries = this->numEntries(); // for the casting to std::size_t
+
+  if(first >= nEntries || (first + len) > nEntries) {
+    throw std::runtime_error("RooDataSet::getWeightBatch(): requested range not valid for dataset.");
+  }
+
+  RooSpan<const double> allWeights = _dstore->getWeightBatch(0, numEntries());
+  if(allWeights.empty()) return {};
+
+  if(!sumW2) return {std::cbegin(allWeights) + first, std::cbegin(allWeights) + first + len};
+
+  // Treat the sumW2 case with a result buffer, first reset buffer if the
+  // number of entries doesn't match with the dataset anymore
+  if(_sumW2Buffer && _sumW2Buffer->size() != nEntries) _sumW2Buffer.reset(nullptr);
+
+  if (!_sumW2Buffer) {
+    _sumW2Buffer = std::make_unique<std::vector<double>>();
+    _sumW2Buffer->reserve(nEntries);
+
+    for (std::size_t i = 0; i < nEntries; ++i) {
+      // Unlike in the RooDataHist case, the sum of weights squared for each
+      // entry is simply the square of the weight.
+      _sumW2Buffer->push_back(allWeights[i] * allWeights[i]);
+    }
+  }
+
+  return RooSpan<const double>(_sumW2Buffer->begin() + first, _sumW2Buffer->begin() + first + len);
 }
 
 
@@ -1159,7 +1191,7 @@ void RooDataSet::add(const RooArgSet& data, Double_t wgt, Double_t wgtError)
 
   const double oldW = _wgtVar ? _wgtVar->getVal() : 0.;
 
-  _varsNoWgt = data;
+  _varsNoWgt.assign(data);
 
   if (_wgtVar) {
     _wgtVar->setVal(wgt) ;
@@ -1211,7 +1243,7 @@ void RooDataSet::add(const RooArgSet& indata, Double_t inweight, Double_t weight
 
   const double oldW = _wgtVar ? _wgtVar->getVal() : 0.;
 
-  _varsNoWgt = indata;
+  _varsNoWgt.assign(indata);
   if (_wgtVar) {
     _wgtVar->setVal(inweight) ;
     _wgtVar->setAsymError(weightErrorLo,weightErrorHi) ;
@@ -1832,7 +1864,7 @@ RooDataSet *RooDataSet::read(const char *fileList, const RooArgList &varList,
       } else {
         // Read single line
         Bool_t readError = variables.readFromStream(file,kTRUE,verbose) ;
-        data->_vars = variables ;
+        data->_vars.assign(variables) ;
 
         // Stop on read error
         if(!file.good()) {

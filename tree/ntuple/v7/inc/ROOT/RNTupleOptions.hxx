@@ -19,6 +19,8 @@
 #include <Compression.h>
 #include <ROOT/RNTupleUtil.hxx>
 
+#include <memory>
+
 namespace ROOT {
 namespace Experimental {
 
@@ -47,29 +49,39 @@ All page sink classes need to support the common options.
 class RNTupleWriteOptions {
    int fCompression{RCompressionSetting::EDefaults::kUseAnalysis};
    ENTupleContainerFormat fContainerFormat{ENTupleContainerFormat::kTFile};
-   NTupleSize_t fNEntriesPerCluster = 64000;
-   NTupleSize_t fNElementsPerPage = 10000;
+   /// Approximation of the target compressed cluster size
+   std::size_t fApproxZippedClusterSize = 50 * 1000 * 1000;
+   /// Memory limit for committing a cluster: with very high compression ratio, we need a limit
+   /// on how large the I/O buffer can grow during writing.
+   std::size_t fMaxUnzippedClusterSize = 512 * 1024 * 1024;
+   /// Should be just large enough so that the compression ratio does not benefit much more from larger pages.
+   /// Unless the cluster is too small to contain a sufficiently large page, pages are
+   /// fApproxUnzippedPageSize in size and tail pages (the last page in a cluster) is between
+   /// fApproxUnzippedPageSize/2 and fApproxUnzippedPageSize * 1.5 in size.
+   std::size_t fApproxUnzippedPageSize = 64 * 1024;
    bool fUseBufferedWrite = true;
 
 public:
    virtual ~RNTupleWriteOptions() = default;
-   virtual std::unique_ptr<RNTupleWriteOptions> Clone() const
-   { return std::make_unique<RNTupleWriteOptions>(*this); }
+   virtual std::unique_ptr<RNTupleWriteOptions> Clone() const;
 
    int GetCompression() const { return fCompression; }
    void SetCompression(int val) { fCompression = val; }
    void SetCompression(RCompressionSetting::EAlgorithm algorithm, int compressionLevel) {
-     fCompression = CompressionSettings(algorithm, compressionLevel);
+      fCompression = CompressionSettings(algorithm, compressionLevel);
    }
 
    ENTupleContainerFormat GetContainerFormat() const { return fContainerFormat; }
    void SetContainerFormat(ENTupleContainerFormat val) { fContainerFormat = val; }
 
-   NTupleSize_t GetNElementsPerPage() const { return fNElementsPerPage; }
-   void SetNElementsPerPage(NTupleSize_t val) { fNElementsPerPage = val; }
+   std::size_t GetApproxZippedClusterSize() const { return fApproxZippedClusterSize; }
+   void SetApproxZippedClusterSize(std::size_t val);
 
-   NTupleSize_t GetNEntriesPerCluster() const { return fNEntriesPerCluster; }
-   void SetNEntriesPerCluster(NTupleSize_t val) { fNEntriesPerCluster = val; }
+   std::size_t GetMaxUnzippedClusterSize() const { return fMaxUnzippedClusterSize; }
+   void SetMaxUnzippedClusterSize(std::size_t val);
+
+   std::size_t GetApproxUnzippedPageSize() const { return fApproxUnzippedPageSize; }
+   void SetApproxUnzippedPageSize(std::size_t val);
 
    bool GetUseBufferedWrite() const { return fUseBufferedWrite; }
    void SetUseBufferedWrite(bool val) { fUseBufferedWrite = val; }
@@ -116,10 +128,13 @@ public:
 
 private:
    EClusterCache fClusterCache = EClusterCache::kDefault;
+   unsigned int fClusterBunchSize = 1;
 
 public:
    EClusterCache GetClusterCache() const { return fClusterCache; }
    void SetClusterCache(EClusterCache val) { fClusterCache = val; }
+   unsigned int GetClusterBunchSize() const  { return fClusterBunchSize; }
+   void SetClusterBunchSize(unsigned int val) { fClusterBunchSize = val; }
 };
 
 } // namespace Experimental

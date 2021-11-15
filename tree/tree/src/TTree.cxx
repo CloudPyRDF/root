@@ -43,10 +43,11 @@ one single I/O buffer or to make several branches.
 Making several branches is particularly interesting in the data analysis phase,
 when it is desirable to have a high reading rate and not all columns are equally interesting
 
-## Table of contents:
-- [Creating a TTree](\ref creatingattree)
-- [Add a Column of Fundamental Types and Arrays thereof](\ref addcolumnoffundamentaltypes)
-- [Add a Column of a STL Collection instances](\ref addingacolumnofstl)
+\anchor creatingattreetoc
+## Create a TTree to store columnar data
+- [Construct a TTree](\ref creatingattree)
+- [Add a column of Fundamental Types and Arrays thereof](\ref addcolumnoffundamentaltypes)
+- [Add a column of a STL Collection instances](\ref addingacolumnofstl)
 - [Add a column holding an object](\ref addingacolumnofobjs)
 - [Add a column holding a TObjectArray](\ref addingacolumnofobjs)
 - [Fill the tree](\ref fillthetree)
@@ -54,7 +55,7 @@ when it is desirable to have a high reading rate and not all columns are equally
 - [An Example](\ref fullexample)
 
 \anchor creatingattree
-## Creating a TTree
+## Construct a TTree
 
 ~~~ {.cpp}
     TTree tree(name, title)
@@ -69,7 +70,7 @@ structures.
 In the following, the details about the creation of different types of branches are given.
 
 \anchor addcolumnoffundamentaltypes
-## Add a column (`branch`) of fundamental types and arrays thereof
+## Add a column ("branch") holding fundamental types and arrays thereof
 This strategy works also for lists of variables, e.g. to describe simple structures.
 It is strongly recommended to persistify those as objects rather than lists of leaves.
 
@@ -113,7 +114,7 @@ It is strongly recommended to persistify those as objects rather than lists of l
 - If the address points to a single numerical variable, the leaflist is optional:
 ~~~ {.cpp}
   int value;
-  `tree->Branch(branchname, &value);`
+  tree->Branch(branchname, &value);
 ~~~
 - If the address points to more than one numerical variable, we strongly recommend
   that the variable be sorted in decreasing order of size.  Any other order will
@@ -130,7 +131,7 @@ It is strongly recommended to persistify those as objects rather than lists of l
   18 bits were sufficient, the syntax would become: `myArr[myArrSize]/d[0,twopi,18]`
 
 \anchor addingacolumnofstl
-## Adding a column of STL collection instances (e.g. std::vector, std::list, std::unordered_map)
+## Adding a column holding STL collection instances (e.g. std::vector, std::list, std::unordered_map)
 
 ~~~ {.cpp}
     auto branch = tree.Branch( branchname, STLcollection, buffsize, splitlevel);
@@ -151,7 +152,7 @@ redefine the branch address before filling the branch again.
 This is done via the TBranch::SetAddress member function.
 
 \anchor addingacolumnofobjs
-## Add a column of objects
+## Add a column holding objects
 
 ~~~ {.cpp}
     MyClass object;
@@ -205,7 +206,7 @@ by TTree::Branch if the pointer p_object is zero, the object will <b>not</b>
 be deleted when the TTree is deleted.
 
 \anchor addingacolumnoftclonesarray
-## Add a column of TClonesArray instances
+## Add a column holding TClonesArray instances
 
 *It is recommended to use STL containers instead of TClonesArrays*.
 
@@ -219,7 +220,7 @@ this function will create one subbranch for each data member of
 the object TTrack.
 
 \anchor fillthetree
-## Fill the Tree:
+## Fill the Tree
 
 A TTree instance is filled with the invocation of the TTree::Fill method:
 ~~~ {.cpp}
@@ -938,6 +939,12 @@ TTree::~TTree()
       TFile *file = fDirectory->GetFile();
       MoveReadCache(file,0);
    }
+
+   // Remove the TTree from any list (linked to to the list of Cleanups) to avoid the unnecessary call to
+   // this RecursiveRemove while we delete our content.
+   ROOT::CallRecursiveRemoveIfNeeded(*this);
+   ResetBit(kMustCleanup); // Don't redo it.
+
    // We don't own the leaves in fLeaves, the branches do.
    fLeaves.Clear();
    // I'm ready to destroy any objects allocated by
@@ -960,6 +967,11 @@ TTree::~TTree()
    // Get rid of our branches, note that this will also release
    // any memory allocated by TBranchElement::SetAddress().
    fBranches.Delete();
+
+   // The TBranch destructor is using fDirectory to detect whether it
+   // owns the TFile that contains its data (See TBranch::~TBranch)
+   fDirectory = nullptr;
+
    // FIXME: We must consider what to do with the reset of these if we are a clone.
    delete fPlayer;
    fPlayer = 0;
@@ -1012,9 +1024,6 @@ TTree::~TTree()
    fClusterRangeEnd = 0;
    delete [] fClusterSize;
    fClusterSize = 0;
-   // Must be done after the destruction of friends.
-   // Note: We do *not* own our directory.
-   fDirectory = 0;
 
    if (fTransientBuffer) {
       delete fTransientBuffer;
@@ -2776,7 +2785,7 @@ TFile* TTree::ChangeFile(TFile* file)
       file->Remove(obj);
       // Histogram: just change the directory.
       if (obj->InheritsFrom("TH1")) {
-         gROOT->ProcessLine(TString::Format("((%s*)0x%lx)->SetDirectory((TDirectory*)0x%lx);", obj->ClassName(), (Long_t) obj, (Long_t) newfile));
+         gROOT->ProcessLine(TString::Format("((%s*)0x%zx)->SetDirectory((TDirectory*)0x%zx);", obj->ClassName(), (size_t) obj, (size_t) newfile));
          continue;
       }
       // Tree: must save all trees in the old file, reset them.
@@ -7836,24 +7845,28 @@ Long64_t TTree::ReadStream(std::istream& inputStream, const char *branchDescript
 void TTree::RecursiveRemove(TObject *obj)
 {
    if (obj == fEventList) {
-      fEventList = 0;
+      fEventList = nullptr;
    }
    if (obj == fEntryList) {
-      fEntryList = 0;
+      fEntryList = nullptr;
    }
    if (fUserInfo) {
       fUserInfo->RecursiveRemove(obj);
    }
    if (fPlayer == obj) {
-      fPlayer = 0;
+      fPlayer = nullptr;
    }
    if (fTreeIndex == obj) {
-      fTreeIndex = 0;
+      fTreeIndex = nullptr;
    }
-   if (fAliases) {
+   if (fAliases == obj) {
+      fAliases = nullptr;
+   } else if (fAliases) {
       fAliases->RecursiveRemove(obj);
    }
-   if (fFriends) {
+   if (fFriends == obj) {
+      fFriends = nullptr;
+   } else if (fFriends) {
       fFriends->RecursiveRemove(obj);
    }
 }

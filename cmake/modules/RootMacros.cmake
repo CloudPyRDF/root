@@ -286,8 +286,8 @@ function(ROOT_GENERATE_DICTIONARY dictionary)
     set(libprefix "")
   endif()
 
-   # list of include directories for dictionary generation
-   set(incdirs)
+  # list of include directories for dictionary generation
+  set(incdirs)
 
   if((CMAKE_PROJECT_NAME STREQUAL ROOT) AND (TARGET ${ARG_MODULE}))
     set(headerdirs)
@@ -609,11 +609,10 @@ function(ROOT_GENERATE_DICTIONARY dictionary)
 
     # get target properties added after call to ROOT_GENERATE_DICTIONARY()
     if(TARGET ${ARG_MODULE})
-      if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.15)
-        set(module_incs $<REMOVE_DUPLICATES:$<TARGET_PROPERTY:${ARG_MODULE},INCLUDE_DIRECTORIES>>)
-      else()
-        set(module_incs $<TARGET_PROPERTY:${ARG_MODULE},INCLUDE_DIRECTORIES>)
-      endif()
+      # NOTE that module_sysincs is already part of ${module_sysincs}. But -isystem "wins",
+      # and list exclusion for generator expressions is too complex.
+      set(module_incs $<REMOVE_DUPLICATES:$<TARGET_PROPERTY:${ARG_MODULE},INCLUDE_DIRECTORIES>>)
+      set(module_sysincs $<REMOVE_DUPLICATES:$<TARGET_PROPERTY:${ARG_MODULE},INTERFACE_SYSTEM_INCLUDE_DIRECTORIES>>)
       set(module_defs $<TARGET_PROPERTY:${ARG_MODULE},COMPILE_DEFINITIONS>)
     endif()
   endif()
@@ -627,11 +626,18 @@ function(ROOT_GENERATE_DICTIONARY dictionary)
      endforeach()
   endif()
 
+  set(compIncPaths)
+  foreach(implinc IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES)
+    list(APPEND compIncPaths "-compilerI${implinc}")
+  endforeach()
+
   #---call rootcint------------------------------------------
   add_custom_command(OUTPUT ${dictionary}.cxx ${pcm_name} ${rootmap_name} ${cpp_module_file}
                      COMMAND ${command} -v2 -f  ${dictionary}.cxx ${newargs} ${excludepathsargs} ${rootmapargs}
                                         ${ARG_OPTIONS}
                                         ${definitions} "$<$<BOOL:${module_defs}>:-D$<JOIN:${module_defs},;-D>>"
+                                        ${compIncPaths}
+                                        "$<$<BOOL:${module_sysincs}>:-isystem;$<JOIN:${module_sysincs},;-isystem;>>"
                                         ${includedirs} "$<$<BOOL:${module_incs}>:-I$<JOIN:${module_incs},;-I>>"
                                         ${headerfiles} ${_linkdef}
                      IMPLICIT_DEPENDS ${_implicitdeps}
@@ -914,14 +920,19 @@ function(ROOT_LINKER_LIBRARY library)
           get_target_property(_target_type ${lib} TYPE)
           if(${_target_type} STREQUAL "INTERFACE_LIBRARY")
             get_target_property(lib_incdirs ${lib} INTERFACE_INCLUDE_DIRECTORIES)
+            get_target_property(lib_rpath   ${lib} INTERFACE_BUILD_RPATH)
           else()
             get_target_property(lib_incdirs ${lib} INCLUDE_DIRECTORIES)
+            get_target_property(lib_rpath   ${lib} BUILD_RPATH)
           endif()
           if(lib_incdirs)
             foreach(dir ${lib_incdirs})
               string(REGEX REPLACE "^[$]<BUILD_INTERFACE:(.+)>" "\\1" dir ${dir})
               list(APPEND dep_inc_list ${dir})
             endforeach()
+          endif()
+          if(lib_rpath)
+            set_target_properties(${library} PROPERTIES BUILD_RPATH ${lib_rpath})
           endif()
         endif()
       endforeach()

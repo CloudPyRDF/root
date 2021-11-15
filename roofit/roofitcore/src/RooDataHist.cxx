@@ -270,6 +270,9 @@ RooDataHist::RooDataHist(std::string_view name, std::string_view title, const Ro
 ///                              category it will be added on the fly. The import command can be specified
 ///                              multiple times. 
 /// <tr><td> Import(map<string,TH1*>&) <td> As above, but allows specification of many imports in a single operation
+/// <tr><td> `GlobalObservables(const RooArgSet&)`      <td> Define the set of global observables to be stored in this RooDataHist.
+///                                                          A snapshot of the passed RooArgSet is stored, meaning the values wont't change unexpectedly.
+/// </table>
 ///                              
 
 RooDataHist::RooDataHist(std::string_view name, std::string_view title, const RooArgList& vars, const RooCmdArg& arg1, const RooCmdArg& arg2, const RooCmdArg& arg3,
@@ -292,6 +295,7 @@ RooDataHist::RooDataHist(std::string_view name, std::string_view title, const Ro
   pc.defineDouble("weight","Weight",0,1) ; 
   pc.defineObject("dummy1","ImportDataHistSliceMany",0) ;
   pc.defineObject("dummy2","ImportHistoSliceMany",0) ;
+  pc.defineSet("glObs","GlobalObservables",0,0) ;
   pc.defineMutex("ImportHisto","ImportHistoSlice","ImportDataHistSlice") ;
   pc.defineDependency("ImportHistoSlice","IndexCat") ;
   pc.defineDependency("ImportDataHistSlice","IndexCat") ;
@@ -308,6 +312,8 @@ RooDataHist::RooDataHist(std::string_view name, std::string_view title, const Ro
     assert(0) ;
     return ;
   }
+
+  if(pc.getSet("glObs")) setGlobalObservables(*pc.getSet("glObs"));
 
   TH1* impHist = static_cast<TH1*>(pc.getObject("impHist")) ;
   Bool_t impDens = pc.getInt("impDens") ;
@@ -579,7 +585,7 @@ void RooDataHist::importDHistSet(const RooArgList& /*vars*/, RooCategory& indexC
 
     // Transfer contents
     for (Int_t i=0 ; i<dhist->numEntries() ; i++) {
-      _vars = *dhist->get(i) ;
+      _vars.assign(*dhist->get(i)) ;
       add(_vars,dhist->weight()*initWgt, pow(dhist->weightError(SumW2),2) ) ;
     }
 
@@ -1582,7 +1588,7 @@ Double_t RooDataHist::sum(const RooArgSet& sumSet, const RooArgSet& sliceSet, bo
   RooArgSet sliceOnlySet(sliceSet);
   sliceOnlySet.remove(sumSet,true,true) ;
 
-  _vars = sliceOnlySet;
+  _vars.assign(sliceOnlySet);
   std::vector<double> const * pbinv = nullptr;
 
   if(correctForBinSize && inverseBinCor) {
@@ -1628,7 +1634,7 @@ Double_t RooDataHist::sum(const RooArgSet& sumSet, const RooArgSet& sliceSet, bo
     }
   }
 
-  _vars = varSave ;
+  _vars.assign(varSave) ;
 
   return total;
 }
@@ -1661,7 +1667,7 @@ Double_t RooDataHist::sum(const RooArgSet& sumSet, const RooArgSet& sliceSet,
   {
     RooArgSet sliceOnlySet(sliceSet);
     sliceOnlySet.remove(sumSet, true, true);
-    _vars = sliceOnlySet;
+    _vars.assign(sliceOnlySet);
   }
 
   // Calculate mask and reference plot bins for non-iterating variables,
@@ -1737,7 +1743,7 @@ Double_t RooDataHist::sum(const RooArgSet& sumSet, const RooArgSet& sliceSet,
     total += getBinScale(ibin)*(get_wgt(ibin) * corr * corrPartial);
   }
 
-  _vars = varSave;
+  _vars.assign(varSave);
 
   return total;
 }
@@ -1931,7 +1937,7 @@ void RooDataHist::setAllWeights(Double_t value)
 TIterator* RooDataHist::sliceIterator(RooAbsArg& sliceArg, const RooArgSet& otherArgs) 
 {
   // Update to current position
-  _vars = otherArgs ;
+  _vars.assign(otherArgs) ;
   _curIndex = calcTreeIndex(_vars, true);
   
   RooAbsArg* intArg = _vars.find(sliceArg) ;
@@ -2003,6 +2009,7 @@ void RooDataHist::cacheValidEntries()
   checkInit() ;
 
   _maskedWeights.assign(_wgt, _wgt + _arrSize);
+  if(_sumw2) _maskedSumw2.assign(_sumw2, _sumw2 + _arrSize);
 
   for (Int_t i=0; i < _arrSize; ++i) {
     get(i) ;
@@ -2010,6 +2017,7 @@ void RooDataHist::cacheValidEntries()
     for (const auto arg : _vars) {
       if (!arg->inRange(nullptr)) {
         _maskedWeights[i] = 0.;
+        if(_sumw2) _maskedSumw2[i] = 0.;
         break;
       }
     }
@@ -2143,10 +2151,16 @@ void RooDataHist::Streamer(TBuffer &R__b) {
 ////////////////////////////////////////////////////////////////////////////////
 /// Return event weights of all events in range [first, first+len).
 /// If cacheValidEntries() has been called, out-of-range events will have a weight of 0.
-RooSpan<const double> RooDataHist::getWeightBatch(std::size_t first, std::size_t len) const {
-  return _maskedWeights.empty() ?
-      RooSpan<const double>{_wgt + first, len} :
-      RooSpan<const double>{_maskedWeights.data() + first, len};
+RooSpan<const double> RooDataHist::getWeightBatch(std::size_t first, std::size_t len, bool sumW2 /*=false*/) const {
+  if(sumW2 && _sumw2) {
+    return _maskedSumw2.empty() ?
+        RooSpan<const double>{_sumw2 + first, len} :
+        RooSpan<const double>{_maskedSumw2.data() + first, len};
+  } else {
+    return _maskedWeights.empty() ?
+        RooSpan<const double>{_wgt + first, len} :
+        RooSpan<const double>{_maskedWeights.data() + first, len};
+  }
 }
 
 

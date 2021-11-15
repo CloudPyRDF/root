@@ -116,6 +116,7 @@ ROOT::Experimental::Detail::RPageSinkFile::WriteSealedPage(
    result.fBytesOnStorage = sealedPage.fSize;
    fCounters->fNPageCommitted.Inc();
    fCounters->fSzWritePayload.Add(sealedPage.fSize);
+   fNBytesCurrentCluster += sealedPage.fSize;
    return result;
 }
 
@@ -130,7 +131,7 @@ ROOT::Experimental::Detail::RPageSinkFile::CommitPageImpl(ColumnHandle_t columnH
       sealedPage = SealPage(page, *element, GetWriteOptions().GetCompression());
    }
 
-   fCounters->fSzZip.Add(page.GetSize());
+   fCounters->fSzZip.Add(page.GetNBytes());
    return WriteSealedPage(sealedPage, element->GetPackedSize(page.GetNElements()));
 }
 
@@ -147,14 +148,11 @@ ROOT::Experimental::Detail::RPageSinkFile::CommitSealedPageImpl(
 }
 
 
-ROOT::Experimental::RClusterDescriptor::RLocator
+std::uint64_t
 ROOT::Experimental::Detail::RPageSinkFile::CommitClusterImpl(ROOT::Experimental::NTupleSize_t /* nEntries */)
 {
-   RClusterDescriptor::RLocator result;
-   result.fPosition = fClusterMinOffset;
-   result.fBytesOnStorage = fClusterMaxOffset - fClusterMinOffset;
-   fClusterMinOffset = std::uint64_t(-1);
-   fClusterMaxOffset = 0;
+   auto result = fNBytesCurrentCluster;
+   fNBytesCurrentCluster = 0;
    return result;
 }
 
@@ -178,7 +176,7 @@ ROOT::Experimental::Detail::RPage
 ROOT::Experimental::Detail::RPageSinkFile::ReservePage(ColumnHandle_t columnHandle, std::size_t nElements)
 {
    if (nElements == 0)
-      nElements = GetWriteOptions().GetNElementsPerPage();
+      throw RException(R__FAIL("invalid call: request empty page"));
    auto elementSize = columnHandle.fColumn->GetElement()->GetSize();
    return fPageAllocator->NewPage(columnHandle.fId, elementSize, nElements);
 }
@@ -195,8 +193,8 @@ void ROOT::Experimental::Detail::RPageSinkFile::ReleasePage(RPage &page)
 ROOT::Experimental::Detail::RPage ROOT::Experimental::Detail::RPageAllocatorFile::NewPage(
    ColumnId_t columnId, void *mem, std::size_t elementSize, std::size_t nElements)
 {
-   RPage newPage(columnId, mem, elementSize * nElements, elementSize);
-   newPage.TryGrow(nElements);
+   RPage newPage(columnId, mem, elementSize, nElements);
+   newPage.GrowUnchecked(nElements);
    return newPage;
 }
 
@@ -216,7 +214,7 @@ ROOT::Experimental::Detail::RPageSourceFile::RPageSourceFile(std::string_view nt
    : RPageSource(ntupleName, options)
    , fPageAllocator(std::make_unique<RPageAllocatorFile>())
    , fPagePool(std::make_shared<RPagePool>())
-   , fClusterPool(std::make_unique<RClusterPool>(*this))
+   , fClusterPool(std::make_unique<RClusterPool>(*this, options.GetClusterBunchSize()))
 {
    fDecompressor = std::make_unique<RNTupleDecompressor>();
    EnableDefaultMetrics("RPageSourceFile");
@@ -375,37 +373,31 @@ std::unique_ptr<ROOT::Experimental::Detail::RPageSource> ROOT::Experimental::Det
 }
 
 std::unique_ptr<ROOT::Experimental::Detail::RCluster>
-ROOT::Experimental::Detail::RPageSourceFile::LoadCluster(DescriptorId_t clusterId, const ColumnSet_t &columns)
+ROOT::Experimental::Detail::RPageSourceFile::PrepareSingleCluster(
+   const RCluster::RKey &clusterKey,
+   std::vector<ROOT::Internal::RRawFile::RIOVec> &readRequests)
 {
-   fCounters->fNClusterLoaded.Inc();
-
-   const auto &clusterDesc = GetDescriptor().GetClusterDescriptor(clusterId);
-   auto clusterLocator = clusterDesc.GetLocator();
-   auto clusterSize = clusterLocator.fBytesOnStorage;
-   R__ASSERT(clusterSize > 0);
-
    struct ROnDiskPageLocator {
-      ROnDiskPageLocator() = default;
-      ROnDiskPageLocator(DescriptorId_t c, NTupleSize_t p, std::uint64_t o, std::uint64_t s)
-         : fColumnId(c), fPageNo(p), fOffset(o), fSize(s) {}
-      DescriptorId_t fColumnId = 0;
-      NTupleSize_t fPageNo = 0;
+      ROOT::Experimental::DescriptorId_t fColumnId = 0;
+      ROOT::Experimental::NTupleSize_t fPageNo = 0;
       std::uint64_t fOffset = 0;
       std::uint64_t fSize = 0;
       std::size_t fBufPos = 0;
    };
 
+   const auto &clusterDesc = GetDescriptor().GetClusterDescriptor(clusterKey.fClusterId);
+
    // Collect the page necessary page meta-data and sum up the total size of the compressed and packed pages
    std::vector<ROnDiskPageLocator> onDiskPages;
    auto activeSize = 0;
-   for (auto columnId : columns) {
+   for (auto columnId : clusterKey.fColumnSet) {
       const auto &pageRange = clusterDesc.GetPageRange(columnId);
       NTupleSize_t pageNo = 0;
       for (const auto &pageInfo : pageRange.fPageInfos) {
          const auto &pageLocator = pageInfo.fLocator;
          activeSize += pageLocator.fBytesOnStorage;
-         onDiskPages.emplace_back(ROnDiskPageLocator(
-            columnId, pageNo, pageLocator.fPosition, pageLocator.fBytesOnStorage));
+         onDiskPages.push_back(
+            {columnId, pageNo, std::uint64_t(pageLocator.fPosition), pageLocator.fBytesOnStorage, 0});
          ++pageNo;
       }
    }
@@ -428,23 +420,23 @@ ROOT::Experimental::Detail::RPageSourceFile::LoadCluster(DescriptorId_t clusterI
    }
    std::sort(gaps.begin(), gaps.end());
    std::size_t gapCut = 0;
+   std::size_t currentGap = 0;
    float szExtra = 0.0;
    for (auto g : gaps) {
+      if (g != currentGap) {
+         gapCut = currentGap;
+         currentGap = g;
+      }
       szExtra += g;
       if (szExtra  > maxOverhead)
          break;
-      gapCut = g;
    }
 
-   // Prepare the input vector for the RRawFile::ReadV() call
-   struct RReadRequest {
-      RReadRequest() = default;
-      RReadRequest(std::size_t b, std::uint64_t o, std::uint64_t s) : fBufPos(b), fOffset(o), fSize(s) {}
-      std::size_t fBufPos = 0;
-      std::uint64_t fOffset = 0;
-      std::uint64_t fSize = 0;
-   };
-   std::vector<ROOT::Internal::RRawFile::RIOVec> readRequests;
+   // In a first step, we coalesce the read requests and calculate the cluster buffer size.
+   // In a second step, we'll fix-up the memory destinations for the read calls given the
+   // address of the allocated buffer.  We must not touch, however, the read requests from previous
+   // calls to PrepareSingleCluster()
+   const auto currentReadRequestIdx = readRequests.size();
 
    ROOT::Internal::RRawFile::RIOVec req;
    std::size_t szPayload = 0;
@@ -484,8 +476,27 @@ ROOT::Experimental::Detail::RPageSourceFile::LoadCluster(DescriptorId_t clusterI
       pageMap->Register(key, ROnDiskPage(buffer + s.fBufPos, s.fSize));
    }
    fCounters->fNPageLoaded.Add(onDiskPages.size());
-   for (auto &r : readRequests) {
-      r.fBuffer = buffer + reinterpret_cast<intptr_t>(r.fBuffer);
+   for (auto i = currentReadRequestIdx; i < readRequests.size(); ++i) {
+      readRequests[i].fBuffer = buffer + reinterpret_cast<intptr_t>(readRequests[i].fBuffer);
+   }
+
+   auto cluster = std::make_unique<RCluster>(clusterKey.fClusterId);
+   cluster->Adopt(std::move(pageMap));
+   for (auto colId : clusterKey.fColumnSet)
+      cluster->SetColumnAvailable(colId);
+   return cluster;
+}
+
+std::vector<std::unique_ptr<ROOT::Experimental::Detail::RCluster>>
+ROOT::Experimental::Detail::RPageSourceFile::LoadClusters(std::span<RCluster::RKey> clusterKeys)
+{
+   fCounters->fNClusterLoaded.Add(clusterKeys.size());
+
+   std::vector<std::unique_ptr<ROOT::Experimental::Detail::RCluster>> clusters;
+   std::vector<ROOT::Internal::RRawFile::RIOVec> readRequests;
+
+   for (auto key: clusterKeys) {
+      clusters.emplace_back(PrepareSingleCluster(key, readRequests));
    }
 
    auto nReqs = readRequests.size();
@@ -496,11 +507,7 @@ ROOT::Experimental::Detail::RPageSourceFile::LoadCluster(DescriptorId_t clusterI
    fCounters->fNReadV.Inc();
    fCounters->fNRead.Add(nReqs);
 
-   auto cluster = std::make_unique<RCluster>(clusterId);
-   cluster->Adopt(std::move(pageMap));
-   for (auto colId : columns)
-      cluster->SetColumnAvailable(colId);
-   return cluster;
+   return clusters;
 }
 
 

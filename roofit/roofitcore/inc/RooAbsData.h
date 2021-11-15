@@ -47,6 +47,12 @@ class RooFormulaVar;
 namespace RooBatchCompute{
 struct RunContext;
 }
+namespace RooFit {
+namespace TestStatistics {
+class RooAbsL;
+struct ConstantTermsOptimizer;
+}
+}
 
 
 // Writes a templated constructor for compatibility with ROOT builds using the
@@ -159,7 +165,7 @@ public:
   /// Return event weights of all events in range [first, first+len).
   /// If no contiguous structure of weights is stored, an empty batch can be returned.
   /// This indicates that the weight is constant. Use weight() to retrieve it.
-  virtual RooSpan<const double> getWeightBatch(std::size_t first, std::size_t len) const = 0;
+  virtual RooSpan<const double> getWeightBatch(std::size_t first, std::size_t len, bool sumW2=false) const = 0;
 
   /// Return number of entries in dataset, *i.e.*, count unweighted entries.
   virtual Int_t numEntries() const ;
@@ -169,6 +175,7 @@ public:
   /// \param[in] cutSpec Apply given cut when counting (*e.g.* `0 < x && x < 5`). Passing `"1"` selects all events.
   /// \param[in] cutRange If the observables have a range with this name, only count events inside this range.
   virtual Double_t sumEntries(const char* cutSpec, const char* cutRange=0) const = 0 ; // DERIVED
+  double sumEntriesW2() const;
   virtual Bool_t isWeighted() const { 
     // Do events in dataset have weights?
     return kFALSE ; 
@@ -297,6 +304,13 @@ public:
 
   static StorageType getDefaultStorageType();
 
+  /// Returns snapshot of global observables stored in this data.
+  /// \return Pointer to a RooArgSet with the snapshot of global observables
+  ///         stored in the data. Can be `nullptr` if no global observales are
+  ///         stored.
+  RooArgSet const* getGlobalObservables() const { return _globalObservables.get(); }
+  void setGlobalObservables(RooArgSet const& globalObservables);
+
 protected:
 
   static StorageType defaultStorageType ;
@@ -321,6 +335,9 @@ protected:
   friend class RooAbsReal ;
   friend class RooAbsOptTestStatistic ;
   friend class RooAbsCachedPdf ;
+  friend struct RooFit::TestStatistics::ConstantTermsOptimizer;
+  // for access into copied dataset:
+  friend class RooFit::TestStatistics::RooAbsL;
 
   virtual void cacheArgs(const RooAbsArg* owner, RooArgSet& varSet, const RooArgSet* nset=0, Bool_t skipZeroWeights=kFALSE) ;
   virtual void resetCache() ;
@@ -341,8 +358,12 @@ protected:
 
   std::map<std::string,RooAbsData*> _ownedComponents ; // Owned external components
 
+  std::unique_ptr<RooArgSet> _globalObservables; // Snapshot of global observables
+
 private:
-   ClassDef(RooAbsData, 5) // Abstract data collection
+  void copyGlobalObservables(const RooAbsData& other);
+
+   ClassDef(RooAbsData, 6) // Abstract data collection
 };
 
 #endif

@@ -33,7 +33,7 @@ ClassImp(TGraphErrors);
 ////////////////////////////////////////////////////////////////////////////////
 
 /** \class TGraphErrors
-    \ingroup Hist
+    \ingroup Graphs
 A TGraphErrors is a TGraph with error bars.
 
 The TGraphErrors painting is performed thanks to the TGraphPainter
@@ -601,7 +601,6 @@ void TGraphErrors::FillZero(Int_t begin, Int_t end, Bool_t from_ctor)
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
 /// It returns the error along X at point `i`.
 
 Double_t TGraphErrors::GetErrorX(Int_t i) const
@@ -613,7 +612,6 @@ Double_t TGraphErrors::GetErrorX(Int_t i) const
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
 /// It returns the error along Y at point `i`.
 
 Double_t TGraphErrors::GetErrorY(Int_t i) const
@@ -625,8 +623,8 @@ Double_t TGraphErrors::GetErrorY(Int_t i) const
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
-/// It returns the error along X at point `i`.
+/// It returns the error along X at point `i`. For TGraphErrors this method is
+/// the same as GetErrorX.
 
 Double_t TGraphErrors::GetErrorXhigh(Int_t i) const
 {
@@ -637,8 +635,8 @@ Double_t TGraphErrors::GetErrorXhigh(Int_t i) const
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
-/// It returns the error along X at point `i`.
+/// It returns the error along X at point `i`. For TGraphErrors this method is
+/// the same as GetErrorX.
 
 Double_t TGraphErrors::GetErrorXlow(Int_t i) const
 {
@@ -649,8 +647,8 @@ Double_t TGraphErrors::GetErrorXlow(Int_t i) const
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
-/// It returns the error along X at point `i`.
+/// It returns the error along Y at point `i`. For TGraphErrors this method is
+/// the same as GetErrorY.
 
 Double_t TGraphErrors::GetErrorYhigh(Int_t i) const
 {
@@ -661,8 +659,8 @@ Double_t TGraphErrors::GetErrorYhigh(Int_t i) const
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
-/// It returns the error along X at point `i`.
+/// It returns the error along Y at point `i`. For TGraphErrors this method is
+/// the same as GetErrorY.
 
 Double_t TGraphErrors::GetErrorYlow(Int_t i) const
 {
@@ -790,6 +788,26 @@ void TGraphErrors::SavePrimitive(std::ostream &out, Option_t *option /*= ""*/)
    }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+/// Multiply the values and errors of a TGraphErrors by a constant c1.
+///
+/// If option contains "x" the x values and errors are scaled
+/// If option contains "y" the y values and errors are scaled
+/// If option contains "xy" both x and y values and errors are scaled
+
+void TGraphErrors::Scale(Double_t c1, Option_t *option)
+{
+   TGraph::Scale(c1, option);
+   TString opt = option; opt.ToLower();
+   if (opt.Contains("x") && GetEX()) {
+      for (Int_t i=0; i<GetN(); i++)
+         GetEX()[i] *= c1;
+   }
+   if (opt.Contains("y") && GetEY()) {
+      for (Int_t i=0; i<GetN(); i++)
+         GetEY()[i] *= c1;
+   }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Set `ex` and `ey` values for point pointed by the mouse.

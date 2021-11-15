@@ -13,6 +13,7 @@
 #define ROOT7_REveManager
 
 #include <ROOT/REveElement.hxx>
+#include <ROOT/REveSystem.hxx>
 #include <ROOT/RLogger.hxx>
 
 #include <ROOT/RWebDisplayArgs.hxx>
@@ -155,6 +156,7 @@ protected:
    std::unordered_map<std::string, std::shared_ptr<TMethodCall> > fMethCallMap;
 
    Logger            fLogger;
+   REveServerStatus  fServerStatus; 
 
    void WindowConnect(unsigned connid);
    void WindowData(unsigned connid, const std::string &arg);
@@ -266,6 +268,8 @@ public:
    void Show(const RWebDisplayArgs &args = "");
 
    std::shared_ptr<REveGeomViewer> ShowGeometry(const RWebDisplayArgs &args = "");
+
+   void GetServerStatus(REveServerStatus&);
 };
 
 R__EXTERN REveManager* gEve;

@@ -159,6 +159,32 @@ public:
                               const RooCmdArg& arg6=RooCmdArg::none(),  const RooCmdArg& arg7=RooCmdArg::none(), const RooCmdArg& arg8=RooCmdArg::none()) ;
   virtual RooFitResult* fitTo(RooAbsData& data, const RooLinkedList& cmdList) ;
 
+  /// Configuration struct for RooAbsPdf::minimizeNLL with all the default
+  //values that also should be taked as the default values for
+  //RooAbsPdf::fitTo.
+  struct MinimizerConfig {
+      double recoverFromNaN = 10.;
+      std::string fitOpt = "";
+      int optConst = 2;
+      int verbose = 0;
+      int doSave = 0;
+      int doTimer = 0;
+      int printLevel = 1;
+      int strat = 1;
+      int initHesse = 0;
+      int hesse = 1;
+      int minos = 0;
+      int numee = 10;
+      int doEEWall = 1;
+      int doWarn = 1;
+      int doSumW2 = -1;
+      int doAsymptotic = -1;
+      const RooArgSet* minosSet = nullptr;
+      std::string minType = "Minuit";
+      std::string minAlg = "minuit";
+  };
+  std::unique_ptr<RooFitResult> minimizeNLL(RooAbsReal & nll, RooAbsData const& data, MinimizerConfig const& cfg);
+
   virtual RooAbsReal* createNLL(RooAbsData& data, const RooLinkedList& cmdList) ;
   virtual RooAbsReal* createNLL(RooAbsData& data, const RooCmdArg& arg1=RooCmdArg::none(),  const RooCmdArg& arg2=RooCmdArg::none(),  
 				const RooCmdArg& arg3=RooCmdArg::none(),  const RooCmdArg& arg4=RooCmdArg::none(), const RooCmdArg& arg5=RooCmdArg::none(),  
@@ -259,7 +285,8 @@ public:
   static void verboseEval(Int_t stat) ;
   static int verboseEval() ;
 
-  virtual Double_t extendedTerm(Double_t observedEvents, const RooArgSet* nset=0) const ;
+  double extendedTerm(double observedEvents, const RooArgSet* nset=0) const;
+  double extendedTerm(RooAbsData const& data, bool weightSquared) const;
 
   void setNormRange(const char* rangeName) ;
   const char* normRange() const { 
@@ -359,8 +386,8 @@ protected:
   static TString _normRangeOverride ; 
 
 private:
-  int calculateAsymptoticCorrectedCovMatrix(RooMinimizer& minimizer, RooAbsData const& data);
-  int calculateSumW2CorrectedCovMatrix(RooMinimizer& minimizer, RooAbsReal const& nll) const;
+  int calcAsymptoticCorrectedCovariance(RooMinimizer& minimizer, RooAbsData const& data);
+  int calcSumW2CorrectedCovariance(RooMinimizer& minimizer, RooAbsReal const& nll) const;
   
   ClassDef(RooAbsPdf,5) // Abstract PDF with normalization support
 };

@@ -90,6 +90,7 @@ public:
    Bool_t SingleRnrState() const override { return kTRUE; }
    Bool_t SetRnrState(Bool_t) override;
 
+   void ProcessSelectionStr(ElementId_t id, bool multi, bool secondary, const char* in_secondary_idcs);
    void ProcessSelection(ElementId_t id, bool multi, bool secondary, const std::set<int>& in_secondary_idcs);
 
    void AddTooltipExpression(const std::string &title, const std::string &expr, bool init = true);
@@ -140,6 +141,8 @@ public:
 
    void SetFilterExpr(const char* filter);
    void ApplyFilter();
+
+   const char* GetFilterExpr(){return fFilterExpr.Data();}
 
    Int_t GetNItems() const { return (Int_t) fItemList->fItems.size(); }
    void *GetDataPtr(Int_t i) const { return  fItemList->fItems[i]->GetDataPtr(); }

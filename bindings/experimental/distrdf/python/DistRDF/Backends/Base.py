@@ -15,6 +15,7 @@ from abc import ABCMeta
 from abc import abstractmethod
 
 import ROOT
+
 from DistRDF.Backends import Utils
 from DistRDF.HeadNode import TreeHeadNode
 
@@ -43,6 +44,7 @@ class BaseBackend(ABC):
         "AsNumpy",
         "Count",
         "Define",
+        "DefinePerSample",
         "Fill",
         "Filter",
         "Graph",
@@ -117,9 +119,15 @@ class BaseBackend(ABC):
                 given RDataFrame object and a range of entries. The range is
                 needed for the `Snapshot` operation.
         """
-        headnode = generator.headnode
-        computation_graph_callable = generator.get_callable()
+        # Check if the workflow must be generated in optimized mode
+        optimized = ROOT.RDF.Experimental.Distributed.optimized
 
+        if optimized:
+            computation_graph_callable = generator.get_callable_optimized()
+        else:
+            computation_graph_callable = generator.get_callable()
+
+        headnode = generator.headnode
         if isinstance(headnode, TreeHeadNode):
             maintreename = headnode.maintreename
             defaultbranches = headnode.defaultbranches
@@ -149,7 +157,15 @@ class BaseBackend(ABC):
                 list: This respresents the list of (mergeable)values of all
                 action nodes in the computational graph.
             """
-            import ROOT
+            # Disable graphics functionality in ROOT. It is not needed inside a
+            # distributed task
+            ROOT.gROOT.SetBatch(True)
+            # Enable thread safety for the whole mapper function. We need to do
+            # this since two tasks could be invoking the C++ interpreter
+            # simultaneously, given that this function will release the GIL
+            # before calling into C++ to run the event loop. Dask multi-threaded
+            # or even multi-process workers could trigger such a scenario.
+            ROOT.EnableThreadSafety()
 
             # We have to decide whether to do this in Dist or in subclasses
             # Utils.declare_headers(worker_includes)  # Declare headers if any
@@ -228,16 +244,26 @@ class BaseBackend(ABC):
                 # user, then limit processing to the entries in this range.
                 rdf = ROOT.RDataFrame(nentries).Range(current_range.start, current_range.end)
 
+            if optimized:
+                # Create the RDF computation graph and execute it on this ranged
+                # dataset. The results of the actions of the graph and their types
+                # are returned
+                results, res_types = computation_graph_callable(rdf, current_range.id)
 
-            # Output of the callable
-            resultptr_list = computation_graph_callable(rdf, current_range.id)
+                # Get RResultPtrs out of the type-erased RResultHandles by
+                # instantiating with the type of the value
+                mergeables = [
+                    ROOT.ROOT.Detail.RDF.GetMergeableValue(res.GetResultPtr[res_type]())
+                    if isinstance(res, ROOT.RDF.RResultHandle)
+                    else res
+                    for res, res_type in zip(results, res_types)
+                ]
+            else:
+                # Output of the callable
+                resultptr_list = computation_graph_callable(rdf, current_range.id)
 
-            mergeables = [
-                resultptr  # Here resultptr is already the result value
-                if isinstance(resultptr, (dict, list))
-                else ROOT.ROOT.Detail.RDF.GetMergeableValue(resultptr)
-                for resultptr in resultptr_list
-            ]
+                mergeables = [Utils.get_mergeablevalue(resultptr) for resultptr in resultptr_list]
+
             return mergeables
 
         def reducer(mergeables_out, mergeables_in):
@@ -259,36 +285,8 @@ class BaseBackend(ABC):
                 list: The list of updated (mergeable)values.
             """
 
-            import ROOT
-
-            # We still need the list index to modify results of `Snapshot` and
-            # `AsNumpy` in place.
-            for index, (mergeable_out, mergeable_in) in enumerate(
-                    zip(mergeables_out, mergeables_in)):
-                # Create a global list with all the files of the partial
-                # snapshots.
-                if isinstance(mergeable_out, list):
-                    mergeables_out[index].extend(mergeable_in)
-
-                # Concatenate the partial numpy arrays along the same key of
-                # the dictionary.
-                elif isinstance(mergeable_out, dict):
-                    # Import numpy lazily
-                    try:
-                        import numpy
-                    except ImportError:
-                        raise ImportError("Failed to import numpy during distributed RDataFrame reduce step.")
-                    mergeables_out[index] = {
-                        key: numpy.concatenate([mergeable_out[key],
-                                                mergeable_in[key]])
-                        for key in mergeable_out
-                    }
-
-                # The `MergeValues` function modifies the arguments in place
-                # so there's no need to access the list elements.
-                else:
-                    ROOT.ROOT.Detail.RDF.MergeValues(
-                        mergeable_out, mergeable_in)
+            for mergeable_out, mergeable_in in zip(mergeables_out, mergeables_in):
+                Utils.merge_values(mergeable_out, mergeable_in)
 
             return mergeables_out
 
@@ -300,16 +298,9 @@ class BaseBackend(ABC):
         # Set the value of every action node
         for node, value in zip(nodes, values):
             if node.operation.name == "Snapshot":
-                # Retrieve treename from operation args and start TChain
-                snapshot_treename = node.operation.args[0]
-                snapshot_chain = ROOT.TChain(snapshot_treename)
-                # Add partial snapshot files to the chain
-                for filename in value:
-                    snapshot_chain.Add(filename)
-                # Create a new rdf with the chain and return that to user
-                node.value = self.make_dataframe(snapshot_chain)
-            elif node.operation.name == "AsNumpy":
-                node.value = value
+                # Retrieving a new distributed RDataFrame from the result of a
+                # distributed Snapshot needs knowledge of the correct backend
+                node.value = value.GetValue(self)
             else:
                 node.value = value.GetValue()
 

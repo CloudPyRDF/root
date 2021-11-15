@@ -28,31 +28,39 @@ class RooConstraintSum : public RooAbsReal {
 public:
 
   RooConstraintSum() {}
-  RooConstraintSum(const char *name, const char *title, const RooArgSet& constraintSet, const RooArgSet& paramSet) ;
+  RooConstraintSum(const char *name, const char *title, const RooArgSet& constraintSet, const RooArgSet& paramSet, bool takeGlobalObservablesFromData=false) ;
 
   RooConstraintSum(const RooConstraintSum& other, const char* name = 0);
-  virtual TObject* clone(const char* newname) const { return new RooConstraintSum(*this, newname); }
+  virtual TObject* clone(const char* newname) const override { return new RooConstraintSum(*this, newname); }
 
   const RooArgList& list() { return _set1 ; }
 
   static std::unique_ptr<RooAbsReal> createConstraintTerm(
         std::string const& name,
         RooAbsPdf const& pdf,
-        RooArgSet const& observables,
+        RooAbsData const& data,
         RooArgSet const* constrainedParameters,
         RooArgSet const* externalConstraints,
         RooArgSet const* globalObservables,
         const char* globalObservablesTag,
+        bool takeGlobalObservablesFromData,
         RooWorkspace * workspace = nullptr);
+
+  bool setData(RooAbsData const& data, bool cloneData=true);
+  /// \copydoc setData(RooAbsData const&, bool)
+  bool setData(RooAbsData& data, bool cloneData=true) override {
+    return setData(static_cast<RooAbsData const&>(data), cloneData);
+  }
 
 protected:
 
   RooListProxy _set1 ;    // Set of constraint terms
   RooSetProxy _paramSet ; // Set of parameters to which constraints apply
+  const bool _takeGlobalObservablesFromData = false; // If the global observable values are taken from data
 
-  Double_t evaluate() const;
+  Double_t evaluate() const override;
 
-  ClassDef(RooConstraintSum,2) // sum of -log of set of RooAbsPdf representing parameter constraints
+  ClassDefOverride(RooConstraintSum,3) // sum of -log of set of RooAbsPdf representing parameter constraints
 };
 
 #endif

@@ -194,7 +194,7 @@ static std::unordered_map<std::string, std::string> &GetJittedExprs() {
 static std::string
 BuildLambdaString(const std::string &expr, const ColumnNames_t &vars, const ColumnNames_t &varTypes)
 {
-   R__ASSERT(vars.size() == varTypes.size());
+   assert(vars.size() == varTypes.size());
 
    TPRegexp re(R"(\breturn\b)");
    const bool hasReturnStmt = re.MatchB(expr);
@@ -422,10 +422,6 @@ ColumnNames_t GetTopLevelBranchNames(TTree &t)
    return bNames;
 }
 
-// The set here is used as a registry, the real list, which keeps the order, is
-// the one in the vector
-class RActionBase;
-
 std::string DemangleTypeIdName(const std::type_info &typeInfo)
 {
    int dummy(0);
@@ -624,6 +620,7 @@ std::string PrettyPrintAddr(const void *const addr)
    return s.str();
 }
 
+/// Book the jitting of a Filter call
 void BookFilterJit(const std::shared_ptr<RJittedFilter> &jittedFilter,
                    std::shared_ptr<RDFDetail::RNodeBase> *prevNodeOnHeap, std::string_view name,
                    std::string_view expression, const std::map<std::string, std::string> &aliasMap,
@@ -669,7 +666,7 @@ void BookFilterJit(const std::shared_ptr<RJittedFilter> &jittedFilter,
    lm->ToJitExec(filterInvocation.str());
 }
 
-// Jit a Define call
+/// Book the jitting of a Define call
 std::shared_ptr<RJittedDefine> BookDefineJit(std::string_view name, std::string_view expression, RLoopManager &lm,
                                              RDataSource *ds, const RBookedDefines &customCols,
                                              const ColumnNames_t &branches,
@@ -691,8 +688,8 @@ std::shared_ptr<RJittedDefine> BookDefineJit(std::string_view name, std::string_
    auto jittedDefine = std::make_shared<RDFDetail::RJittedDefine>(name, type, lm.GetNSlots(), lm.GetDSValuePtrs());
 
    std::stringstream defineInvocation;
-   defineInvocation << "ROOT::Internal::RDF::JitDefineHelper(" << lambdaName << ", new const char*["
-                    << parsedExpr.fUsedCols.size() << "]{";
+   defineInvocation << "ROOT::Internal::RDF::JitDefineHelper<ROOT::Internal::RDF::DefineTypes::RDefineTag>("
+                    << lambdaName << ", new const char*[" << parsedExpr.fUsedCols.size() << "]{";
    for (const auto &col : parsedExpr.fUsedCols) {
       defineInvocation << "\"" << col << "\", ";
    }
@@ -703,6 +700,38 @@ std::shared_ptr<RJittedDefine> BookDefineJit(std::string_view name, std::string_
    // - jittedDefine: heap-allocated weak_ptr that will be deleted by JitDefineHelper after usage
    // - definesAddr: heap-allocated, will be deleted by JitDefineHelper after usage
    defineInvocation << "}, " << parsedExpr.fUsedCols.size() << ", \"" << name
+                    << "\", reinterpret_cast<ROOT::Detail::RDF::RLoopManager*>(" << PrettyPrintAddr(&lm)
+                    << "), reinterpret_cast<std::weak_ptr<ROOT::Detail::RDF::RJittedDefine>*>("
+                    << PrettyPrintAddr(MakeWeakOnHeap(jittedDefine))
+                    << "), reinterpret_cast<ROOT::Internal::RDF::RBookedDefines*>(" << definesAddr
+                    << "), reinterpret_cast<std::shared_ptr<ROOT::Detail::RDF::RNodeBase>*>("
+                    << PrettyPrintAddr(upcastNodeOnHeap) << "));\n";
+
+   lm.ToJitExec(defineInvocation.str());
+   return jittedDefine;
+}
+
+/// Book the jitting of a DefinePerSample call
+std::shared_ptr<RJittedDefine> BookDefinePerSampleJit(std::string_view name, std::string_view expression,
+                                                      RLoopManager &lm, const RBookedDefines &customCols,
+                                                      std::shared_ptr<RNodeBase> *upcastNodeOnHeap)
+{
+   const auto lambdaName = DeclareLambda(std::string(expression), {"rdfslot_", "rdfsampleinfo_"},
+                                         {"unsigned int", "const ROOT::RDF::RSampleInfo"});
+   const auto retType = RetTypeOfLambda(lambdaName);
+
+   auto definesCopy = new RBookedDefines(customCols);
+   auto definesAddr = PrettyPrintAddr(definesCopy);
+   auto jittedDefine = std::make_shared<RDFDetail::RJittedDefine>(name, retType, lm.GetNSlots(), lm.GetDSValuePtrs());
+
+   std::stringstream defineInvocation;
+   defineInvocation << "ROOT::Internal::RDF::JitDefineHelper<ROOT::Internal::RDF::DefineTypes::RDefinePerSampleTag>("
+                    << lambdaName << ", nullptr, 0, ";
+   // lifetime of pointees:
+   // - lm is the loop manager, and if that goes out of scope jitting does not happen at all (i.e. will always be valid)
+   // - jittedDefine: heap-allocated weak_ptr that will be deleted by JitDefineHelper after usage
+   // - definesAddr: heap-allocated, will be deleted by JitDefineHelper after usage
+   defineInvocation << "\"" << name
                     << "\", reinterpret_cast<ROOT::Detail::RDF::RLoopManager*>(" << PrettyPrintAddr(&lm)
                     << "), reinterpret_cast<std::weak_ptr<ROOT::Detail::RDF::RJittedDefine>*>("
                     << PrettyPrintAddr(MakeWeakOnHeap(jittedDefine))
@@ -858,6 +887,16 @@ void CheckForDuplicateSnapshotColumns(const ColumnNames_t &cols)
          throw std::logic_error(msg);
       }
    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// \brief Trigger the execution of an RDataFrame computation graph.
+/// \param[in] node A node of the computation graph (not a result).
+///
+/// This function calls the RLoopManager::Run method on the \p fLoopManager data
+/// member of the input argument. It is intended for internal use only.
+void TriggerRun(ROOT::RDF::RNode &node){
+   node.fLoopManager->Run();
 }
 
 } // namespace RDF

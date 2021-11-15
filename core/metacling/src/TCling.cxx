@@ -40,6 +40,7 @@ clang/LLVM technology.
 #include "TClassEdit.h"
 #include "TClassTable.h"
 #include "TClingCallbacks.h"
+#include "TClingDiagnostics.h"
 #include "TBaseClass.h"
 #include "TDataMember.h"
 #include "TMemberInspector.h"
@@ -3393,6 +3394,15 @@ void TCling::RegisterLoadedSharedLibrary(const char* filename)
        || strstr(filename, "/usr/lib/libAudioToolboxUtility")
        || strstr(filename, "/usr/lib/liboah")
        || strstr(filename, "/usr/lib/libRosetta")
+       || strstr(filename, "/usr/lib/libCoreEntitlements")
+       // These are candidates for suppression, too:
+       //   -lfakelink -lapple_nghttp2 -lnetwork -lsqlite3 -lenergytrace -lCoreEntitlements
+       //   -lMobileGestalt -lcoretls -lcoretls_cfhelpers -lxar.1 -lcompression -larchive.2
+       //   -lxml2.2 -lpcap.A -ldns_services -llzma.5 -lbz2.1.0 -liconv.2 -lcharset.1
+       //   -lCheckFix -lmecabra -lmecab -lgermantok -lThaiTokenizer -lChineseTokenizer
+       //   -lcmph -lutil -lapp_launch_measurement -lxslt.1 -lspindump -late -lexpat.1
+       //   -lAudioStatistics -lSMC -lperfcheck -lmis -lIOReport -lheimdal-asn1
+
        // "cannot link directly with dylib/framework, your binary is not an allowed client of
        // /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/
        // SDKs/MacOSX.sdk/usr/lib/libAudioToolboxUtility.tbd for architecture x86_64
@@ -7576,6 +7586,28 @@ void TCling::SetErrmsgcallback(void* p) const
 #endif
 #endif
 }
+
+void TCling::ReportDiagnosticsToErrorHandler(bool enable)
+{
+   if (enable) {
+      auto consumer = new TClingDelegateDiagnosticPrinter(
+         &fInterpreter->getDiagnostics().getDiagnosticOptions(),
+         fInterpreter->getCI()->getLangOpts(),
+         [] (clang::DiagnosticsEngine::Level Level, const std::string &Info) {
+            if (Level == clang::DiagnosticsEngine::Warning) {
+               ::Warning("cling", "%s", Info.c_str());
+            } else if (Level == clang::DiagnosticsEngine::Error
+                       || Level == clang::DiagnosticsEngine::Fatal) {
+               ::Error("cling", "%s", Info.c_str());
+            } else {
+               ::Info("cling", "%s", Info.c_str());
+            }
+         });
+      fInterpreter->replaceDiagnosticConsumer(consumer, /*Own=*/true);
+   } else {
+      fInterpreter->replaceDiagnosticConsumer(nullptr);
+   }
+}  
 
 
 ////////////////////////////////////////////////////////////////////////////////

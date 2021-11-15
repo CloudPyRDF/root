@@ -48,7 +48,7 @@ ClassImp(TGraph);
 ////////////////////////////////////////////////////////////////////////////////
 
 /** \class TGraph
-    \ingroup Hist
+    \ingroup Graphs
 A TGraph is an object made of two arrays X and Y with npoints each.
 The TGraph painting is performed thanks to the TGraphPainter
 class. All details about the various painting options are given in this class.
@@ -1413,7 +1413,6 @@ Double_t TGraph::GetRMS(Int_t axis) const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
 /// It always returns a negative value. Real implementation in TGraphErrors
 
 Double_t TGraph::GetErrorX(Int_t) const
@@ -1422,7 +1421,6 @@ Double_t TGraph::GetErrorX(Int_t) const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
 /// It always returns a negative value. Real implementation in TGraphErrors
 
 Double_t TGraph::GetErrorY(Int_t) const
@@ -1431,7 +1429,6 @@ Double_t TGraph::GetErrorY(Int_t) const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
 /// It always returns a negative value. Real implementation in TGraphErrors
 /// and TGraphAsymmErrors
 
@@ -1441,7 +1438,6 @@ Double_t TGraph::GetErrorXhigh(Int_t) const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
 /// It always returns a negative value. Real implementation in TGraphErrors
 /// and TGraphAsymmErrors
 
@@ -1451,7 +1447,6 @@ Double_t TGraph::GetErrorXlow(Int_t) const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
 /// It always returns a negative value. Real implementation in TGraphErrors
 /// and TGraphAsymmErrors
 
@@ -1461,7 +1456,6 @@ Double_t TGraph::GetErrorYhigh(Int_t) const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// This function is called by GraphFitChisquare.
 /// It always returns a negative value. Real implementation in TGraphErrors
 /// and TGraphAsymmErrors
 
@@ -2209,6 +2203,26 @@ void TGraph::SavePrimitive(std::ostream &out, Option_t *option /*= ""*/)
       return;
    }
    out << "   graph->Draw(" << quote << option << quote << ");" << std::endl;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Multiply the values of a TGraph by a constant c1.
+///
+/// If option contains "x" the x values are scaled
+/// If option contains "y" the y values are scaled
+/// If option contains "xy" both x and y values are scaled
+
+void TGraph::Scale(Double_t c1, Option_t *option)
+{
+   TString opt = option; opt.ToLower();
+   if (opt.Contains("x")) {
+      for (Int_t i=0; i<GetN(); i++)
+         GetX()[i] *= c1;
+   }
+   if (opt.Contains("y")) {
+      for (Int_t i=0; i<GetN(); i++)
+         GetY()[i] *= c1;
+   }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

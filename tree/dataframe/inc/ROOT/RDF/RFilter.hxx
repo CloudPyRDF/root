@@ -21,6 +21,7 @@
 #include "RtypesCore.h"
 
 #include <algorithm>
+#include <cassert>
 #include <memory>
 #include <string>
 #include <utility> // std::index_sequence
@@ -55,24 +56,18 @@ class R__CLING_PTRCHECK(off) RFilter final : public RFilterBase {
    using TypeInd_t = std::make_index_sequence<ColumnTypes_t::list_size>;
 
    FilterF fFilter;
-   const ROOT::RDF::ColumnNames_t fColumnNames;
-   const std::shared_ptr<PrevDataFrame> fPrevDataPtr;
-   PrevDataFrame &fPrevData;
    /// Column readers per slot and per input column
    std::vector<std::array<std::unique_ptr<RColumnReaderBase>, ColumnTypes_t::list_size>> fValues;
-   /// The nth flag signals whether the nth input column is a custom column or not.
-   std::array<bool, ColumnTypes_t::list_size> fIsDefine;
+   const std::shared_ptr<PrevDataFrame> fPrevDataPtr;
+   PrevDataFrame &fPrevData;
 
 public:
    RFilter(FilterF f, const ROOT::RDF::ColumnNames_t &columns, std::shared_ptr<PrevDataFrame> pd,
            const RDFInternal::RBookedDefines &defines, std::string_view name = "")
-      : RFilterBase(pd->GetLoopManagerUnchecked(), name, pd->GetLoopManagerUnchecked()->GetNSlots(), defines),
-        fFilter(std::move(f)), fColumnNames(columns), fPrevDataPtr(std::move(pd)), fPrevData(*fPrevDataPtr),
-        fValues(fNSlots), fIsDefine()
+      : RFilterBase(pd->GetLoopManagerUnchecked(), name, pd->GetLoopManagerUnchecked()->GetNSlots(), defines, columns),
+        fFilter(std::move(f)), fValues(pd->GetLoopManagerUnchecked()->GetNSlots()), fPrevDataPtr(std::move(pd)),
+        fPrevData(*fPrevDataPtr)
    {
-      const auto nColumns = fColumnNames.size();
-      for (auto i = 0u; i < nColumns; ++i)
-         fIsDefine[i] = fDefines.HasName(fColumnNames[i]);
    }
 
    RFilter(const RFilter &) = delete;
@@ -115,6 +110,7 @@ public:
       RDFInternal::RColumnReadersInfo info{fColumnNames, fDefines, fIsDefine.data(), fLoopManager->GetDSValuePtrs(),
                                            fLoopManager->GetDataSource()};
       fValues[slot] = RDFInternal::MakeColumnReaders(slot, r, ColumnTypes_t{}, info);
+      fLastCheckedEntry[slot * RDFInternal::CacheLineStep<Long64_t>()] = -1;
    }
 
    // recursive chain of `Report`s
@@ -143,7 +139,7 @@ public:
 
    void TriggerChildrenCount() final
    {
-      R__ASSERT(!fName.empty()); // this method is to only be called on named filters
+      assert(!fName.empty()); // this method is to only be called on named filters
       fPrevData.IncrChildrenCount();
    }
 

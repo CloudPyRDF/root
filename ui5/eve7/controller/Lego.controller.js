@@ -24,66 +24,88 @@ sap.ui.define([
     return Controller.extend("rootui5.eve7.controller.Lego", {
 
         onInit: function () {
+            // disable narrowing axis range
+            JSROOT.settings.Zooming = false;
+
             let data = this.getView().getViewData();
+            if (data) {
+                this.setupManagerAndViewType(data.eveViewerId, data.mgr);
+            }
+            else {
+                UIComponent.getRouterFor(this).getRoute("Lego").attachPatternMatched(this.onViewObjectMatched, this);
+            }
 
-            console.log("LEGO onInit ", data);
+            ResizeHandler.register(this.getView(), this.onResize.bind(this));
+        },
 
-            this.mgr       = data.mgr;
-            this.eveViewerId = data.eveViewerId;
+        onViewObjectMatched: function (oEvent) {
+            let args = oEvent.getParameter("arguments");
+            this.setupManagerAndViewType(JSROOT.$eve7tmp.eveViewerId, JSROOT.$eve7tmp.mgr);
+            delete JSROOT.$eve7tmp;
+        },
+
+        setupManagerAndViewType: function (eveViewerId, mgr) {
+            this.eveViewerId = eveViewerId;
+            this.mgr       = mgr;
 
             let eviewer = this.mgr.GetElement(this.eveViewerId);
-            console.log("viewer", eviewer);
             let sceneInfo = eviewer.childs[0];
             let sceneId = sceneInfo.fSceneId;
-
             this.mgr.RegisterController(this);
             this.mgr.RegisterSceneReceiver(sceneId, this);
 
             let scene = this.mgr.GetElement(sceneId);
-            console.log("Lego scene 2", scene);
-
             let chld = scene.childs[0];
             let element = this.byId("legoX");
             element.setHtmlText("Pointset infected by TCanvas / Lego Stack");
 
-            ResizeHandler.register(this.getView(), this.onResize.bind(this));
-
-            this.canvas_json = JSROOT.parse( atob(chld.fTitle) );
-            // console.log(JSON.stringify(this.canvas_json));
+            this.eve_lego = chld;
+            this.canvas_json = JSROOT.parse(atob(chld.fTitle));
         },
-
-        onResize()
-        {
+        onResize : function() {
+            // use timeout
+            if (this.resize_tmout) clearTimeout(this.resize_tmout);
+            if (this.canvas_painter) this.canvas_painter.CheckCanvasResize();
+            this.resize_tmout = setTimeout(this.onResizeTimeout.bind(this), 250); // minimal latency
+        },
+        drawHist: function () {
             let domref = this.byId("legoPlotPlace").getDomRef();
-
-            if ( ! this.jst_ptr)
-            {
+            if (!this.jst_ptr) {
                 this.jst_ptr = 1;
-                JSROOT.draw(domref, this.canvas_json);
+                JSROOT.draw(domref, this.canvas_json).then(hist_painter => {
+                    this.canv_painter = hist_painter.getCanvPainter();
+                });
             }
-            else
-            {
+            else {
                 // if completely different, call JSROOT.cleanup(dom) first.
-                JSROOT.redraw(domref, this.canvas_json);
+                JSROOT.redraw(domref, this.canvas_json).then(hist_painter => {
+                    this.canv_painter = hist_painter.getCanvPainter();
+                });
             }
         },
-
+        onResizeTimeout: function () {
+            this.drawHist(); // AMT when to draw hist ??
+            delete this.resize_tmout;
+        },
         onSceneCreate: function (element, id) {
-            console.log("LEGO onSceneCreate", id);
+            // console.log("LEGO onSceneCreate", id);
         },
 
         sceneElementChange: function (el) {
-            console.log("LEGO element changed");
+            //console.log("LEGO element changed");
         },
 
         endChanges: function (oEvent) {
+            let domref = this.byId("legoPlotPlace").getDomRef();
+            this.canvas_json = JSROOT.parse( atob(this.eve_lego.fTitle) );
+            JSROOT.redraw(domref, this.canvas_json);
         },
 
         elementRemoved: function (elId) {
         },
 
         SelectElement: function (selection_obj, element_id, sec_idcs) {
-            console.log("LEGO element selected", element_id);
+           // console.log("LEGO element selected", element_id);
         },
 
         UnselectElement: function (selection_obj, element_id) {

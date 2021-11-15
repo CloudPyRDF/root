@@ -41,7 +41,7 @@
 #include "TTabCom.h"
 #include <cstdlib>
 #include <algorithm>
-
+#include <iostream>
 #include "Getline.h"
 #include "strlcpy.h"
 #include "snprintf.h"
@@ -146,6 +146,16 @@ TRint::TRint(const char *appClassName, Int_t *argc, char **argv, void *options,
    TApplication(appClassName, argc, argv, options, numOptions),
    fCaughtSignal(-1)
 {
+
+   if (*argc > 1) {
+      // Early exit if there are remaining unrecognized options
+      for (auto n = 1; n < *argc; n++) {
+         std::cerr << "root: unrecognized option '" << argv[n] << "'\n";
+      }
+      std::cerr << "Try 'root --help' for more information.\n";
+      TApplication::Terminate(0);
+   }
+
    fNcmd          = 0;
    fDefaultPrompt = "root [%d] ";
    fInterrupt     = kFALSE;
@@ -747,8 +757,11 @@ Longptr_t  TRint::ProcessLineNr(const char* filestem, const char *line, Int_t *e
    if (!error)
       error = &err;
    if (line && line[0] != '.') {
-      TString lineWithNr = TString::Format("#line 1 \"%s%d\"\n", filestem, fNcmd - 1);
-      int res = ProcessLine(lineWithNr + line, kFALSE, error);
+      TString input;
+      if (!fBackslashContinue)
+         input += TString::Format("#line 1 \"%s%d\"\n", filestem, fNcmd - 1);
+      input += line;
+      int res = ProcessLine(input, kFALSE, error);
       if (*error == TInterpreter::kProcessing) {
          if (!fNonContinuePrompt.Length())
             fNonContinuePrompt = fDefaultPrompt;
@@ -757,6 +770,10 @@ Longptr_t  TRint::ProcessLineNr(const char* filestem, const char *line, Int_t *e
          SetPrompt(fNonContinuePrompt);
          fNonContinuePrompt.Clear();
       }
+      std::string_view sv(line);
+      auto lastNonSpace = sv.find_last_not_of(" \t");
+      fBackslashContinue = (lastNonSpace != std::string_view::npos
+                            && sv[lastNonSpace] == '\\');
       return res;
    }
    if (line && line[0] == '.' && line[1] == '@') {

@@ -44,8 +44,8 @@ ROOT::Experimental::Detail::RPageSinkBuf::CommitPageImpl(ColumnHandle_t columnHa
    // TODO avoid frequent (de)allocations by holding on to allocated buffers in RColumnBuf
    RPage bufPage = ReservePage(columnHandle, page.GetNElements());
    // make sure the page is aware of how many elements it will have
-   R__ASSERT(bufPage.TryGrow(page.GetNElements()));
-   memcpy(bufPage.GetBuffer(), page.GetBuffer(), page.GetSize());
+   bufPage.GrowUnchecked(page.GetNElements());
+   memcpy(bufPage.GetBuffer(), page.GetBuffer(), page.GetNBytes());
    // Safety: RColumnBuf::iterators are guaranteed to be valid until the
    // element is destroyed. In other words, all buffered page iterators are
    // valid until the return value of DrainBufferedPages() goes out of scope in
@@ -82,7 +82,7 @@ ROOT::Experimental::Detail::RPageSinkBuf::CommitSealedPageImpl(
    return RClusterDescriptor::RLocator{};
 }
 
-ROOT::Experimental::RClusterDescriptor::RLocator
+std::uint64_t
 ROOT::Experimental::Detail::RPageSinkBuf::CommitClusterImpl(ROOT::Experimental::NTupleSize_t nEntries)
 {
    if (fTaskScheduler) {
@@ -100,10 +100,7 @@ ROOT::Experimental::Detail::RPageSinkBuf::CommitClusterImpl(ROOT::Experimental::
          ReleasePage(bufPage.fPage);
       }
    }
-   fInnerSink->CommitCluster(nEntries);
-   // we're feeding bad locators to fOpenPageRanges but it should not matter
-   // because they never get written out
-   return RClusterDescriptor::RLocator{};
+   return fInnerSink->CommitCluster(nEntries);
 }
 
 void ROOT::Experimental::Detail::RPageSinkBuf::CommitDatasetImpl()

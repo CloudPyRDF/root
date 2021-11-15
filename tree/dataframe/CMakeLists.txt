@@ -52,7 +52,8 @@ ROOT_STANDARD_LIBRARY_PACKAGE(ROOTDataFrame
     ROOT/RDF/RActionBase.hxx
     ROOT/RDF/RAction.hxx
     ROOT/RDF/RBookedDefines.hxx
-    ROOT/RDF/RDataBlockNotifier.hxx
+    ROOT/RDF/RNewSampleNotifier.hxx
+    ROOT/RDF/RSampleInfo.hxx
     ROOT/RDF/RDefineBase.hxx
     ROOT/RDF/RDefine.hxx
     ROOT/RDF/RDefineReader.hxx
@@ -83,7 +84,6 @@ ROOT_STANDARD_LIBRARY_PACKAGE(ROOTDataFrame
     src/RDefineBase.cxx
     src/RCutFlowReport.cxx
     src/RDataFrame.cxx
-    src/RDefineReader.cxx
     src/RDFActionHelpers.cxx
     src/RDFBookedDefines.cxx
     src/RDFDisplay.cxx

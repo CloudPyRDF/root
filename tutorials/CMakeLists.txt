@@ -261,6 +261,19 @@ else()
   if(MSVC AND NOT win_broken_tests)
     list(APPEND tmva_veto tmva/tmva103_Application.C tmva/envelope/classification.C)
   endif()
+  #these depends on external packages
+  find_python_module(torch QUIET)
+  find_python_module(keras QUIET)
+  if (NOT PY_KERAS_FOUND)
+    list(APPEND tmva_veto tmva/TMVA_SOFIE_Keras.C)
+  endif()
+  if (NOT PY_TORCH_FOUND)
+    list(APPEND tmva_veto tmva/TMVA_SOFIE_PyTorch.C)
+  endif()
+  if (NOT tmva-sofie)
+    list(APPEND tmva_veto tmva/TMVA_SOFIE_ONNX.C)
+  endif()
+  
 endif()
 
 if (NOT ROOT_pythia6_FOUND)
@@ -295,6 +308,12 @@ if(root7)
     list(APPEND root7_veto v7/ntuple/ntpl004_dimuon.C)
     list(APPEND root7_veto rcanvas/df104.py)
     list(APPEND root7_veto rcanvas/df105.py)
+  endif()
+  if(MSVC AND NOT win_broken_tests)
+    #---EOS is not supported on Windows
+    list(APPEND root7_veto rcanvas/df104.py)
+    list(APPEND root7_veto rcanvas/df105.py)
+    list(APPEND root7_veto rcanvas/rbox.py)
   endif()
 else()
   file(GLOB v7_veto_files RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/ v7/*.py v7/*.cxx v7/*/*.cxx v7/*.C v7/*/*.C rcanvas/*.py rcanvas/*.cxx)
@@ -430,7 +449,7 @@ set(hist-hbars-depends  tutorial-tree-cernbuild)
 set(benchmarks-depends tutorial-hsimple
                        tutorial-fit-fit1
                        tutorial-fit-myfit
-                       tutorial-hist-h1draw
+					   tutorial-hist-h1ReadAndDraw
                        tutorial-hist-FirstContour
                        tutorial-geom-na49view
                        tutorial-tree-ntuple1
@@ -586,10 +605,6 @@ if(ROOT_pyroot_FOUND)
         roofit/rf511_wsfactory_basic.py)
   endif()
 
-  if(NOT dataframe)
-    list(APPEND pyveto pyroot/pyroot002_TTreeAsMatrix.py)
-  endif()
-
   if(NOT dataframe
      OR ${PYTHON_VERSION_STRING_Development_Main} VERSION_LESS_EQUAL 2.7.5
      OR (DEFINED ENV{ROOTTEST_IGNORE_NUMBA_PY2} AND PYTHON_VERSION_MAJOR_Development_Main EQUAL 2)
@@ -646,11 +661,11 @@ if(ROOT_pyroot_FOUND)
 
   #---Python tutorials dependencies--------------------------------------
   set(pyroot-ntuple1-depends tutorial-pyroot-hsimple-py)
-  set(pyroot-h1draw-depends tutorial-pyroot-hsimple-py)
+  set(pyroot-h1ReadAndDraw-depends tutorial-pyroot-hsimple-py)
   set(pyroot-benchmarks-depends tutorial-pyroot-hsimple-py
                                 tutorial-pyroot-fit1-py
                                 tutorial-pyroot-na49view-py
-                                tutorial-pyroot-h1draw-py
+								tutorial-pyroot-h1ReadAndDraw-py
                                 tutorial-pyroot-ntuple1-py)
   set(pyroot-fit1-depends tutorial-pyroot-fillrandom-py)
   set(pyroot-na49view-depends tutorial-pyroot-geometry-py)

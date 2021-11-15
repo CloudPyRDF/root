@@ -74,8 +74,8 @@ if(NOT builtin_nlohmannjson)
   else()
     find_package(nlohmann_json QUIET)
     if(nlohmann_json_FOUND)
-      get_target_property(_nlohmann_json_inlc nlohmann_json::nlohmann_json INTERFACE_INCLUDE_DIRECTORIES)
-      message(STATUS "Found nlohmann/json.hpp in ${_nlohmann_json_inlc} (found version ${nlohmann_json_VERSION})")
+      get_target_property(_nlohmann_json_incl nlohmann_json::nlohmann_json INTERFACE_INCLUDE_DIRECTORIES)
+      message(STATUS "Found nlohmann/json.hpp in ${_nlohmann_json_incl} (found version ${nlohmann_json_VERSION})")
     else()
       message(STATUS "nlohmann/json.hpp not found. Switching on builtin_nlohmannjson option")
       set(builtin_nlohmannjson ON CACHE BOOL "Enabled because nlohmann/json.hpp not found" FORCE)
@@ -954,13 +954,18 @@ if(monalisa)
 endif()
 
 #---Check for Xrootd support---------------------------------------------------------
+
+foreach(suffix FOUND INCLUDE_DIR INCLUDE_DIRS LIBRARY LIBRARIES)
+  unset(XROOTD_${suffix} CACHE)
+endforeach()
+
 if(xrootd AND NOT builtin_xrootd)
   message(STATUS "Looking for XROOTD")
   find_package(XROOTD)
   if(NOT XROOTD_FOUND)
     if(fail-on-missing)
       message(FATAL_ERROR "XROOTD not found. Set environment variable XRDSYS to point to your XROOTD installation, "
-                          "or inlcude the installation of XROOTD in the CMAKE_PREFIX_PATH. "
+                          "or include the installation of XROOTD in the CMAKE_PREFIX_PATH. "
                           "Alternatively, you can also enable the option 'builtin_xrootd' to build XROOTD internally")
     else()
       message(STATUS "XROOTD not found, enabling 'builtin_xrootd' option")
@@ -981,75 +986,11 @@ if(builtin_xrootd AND NO_CONNECTION)
   endif()
 endif()
 if(builtin_xrootd)
-  set(XROOTD_VERSION 4.12.8)
-  set(XROOTD_VERSIONNUM 400120008)
-  set(XROOTD_SRC_URI ${lcgpackages}/xrootd-${XROOTD_VERSION}.tar.gz)
-  set(XROOTD_DESTDIR ${CMAKE_BINARY_DIR})
-  set(XROOTD_ROOTDIR ${XROOTD_DESTDIR})
-  message(STATUS "Downloading and building XROOTD version ${xrootd_version}")
-
-  # Guess under which directory XRootD will install its libraires
-  set(XROOTD_LIBDIR "lib")
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ${CMAKE_SIZEOF_VOID_P} EQUAL 8
-     AND NOT CMAKE_CROSSCOMPILING AND NOT EXISTS "/etc/debian_version")
-    set(XROOTD_LIBDIR "lib64")
-  endif()
-
-  set(XROOTD_LIBRARIES ${XROOTD_ROOTDIR}/${XROOTD_LIBDIR}/libXrdUtils${CMAKE_SHARED_LIBRARY_SUFFIX}
-                       ${XROOTD_ROOTDIR}/${XROOTD_LIBDIR}/libXrdClient${CMAKE_SHARED_LIBRARY_SUFFIX}
-                       ${XROOTD_ROOTDIR}/${XROOTD_LIBDIR}/libXrdCl${CMAKE_SHARED_LIBRARY_SUFFIX})
-  ExternalProject_Add(
-    XROOTD
-    URL ${XROOTD_SRC_URI}
-    URL_HASH SHA256=86d8e4bd7382fb3053002cf3d58b997623d1d26db93c8891080603827f01b4cd
-    INSTALL_DIR ${XROOTD_ROOTDIR}
-    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX:PATH=<INSTALL_DIR>
-               -DCMAKE_BUILD_TYPE=Release
-               -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-               -DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}
-               -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-               -DCMAKE_CXX_FLAGS=${ROOT_EXTERNAL_CXX_FLAGS}
-               -DCMAKE_OSX_SYSROOT=${CMAKE_OSX_SYSROOT}
-               -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}
-               -DENABLE_PYTHON=OFF
-               -DENABLE_CEPH=OFF
-               -DCMAKE_INSTALL_RPATH:STRING=${XROOTD_ROOTDIR}/${XROOTD_LIBDIR}
-    INSTALL_COMMAND ${CMAKE_COMMAND} --build . --target install
-            COMMAND ${CMAKE_COMMAND} -E copy_directory <INSTALL_DIR>/include/xrootd <INSTALL_DIR>/include
-    LOG_DOWNLOAD 1 LOG_CONFIGURE 1 LOG_BUILD 1 LOG_INSTALL 1
-    BUILD_BYPRODUCTS ${XROOTD_LIBRARIES}
-    TIMEOUT 600
-  )
-  # We cannot call find_package(XROOTD) becuase the package is not yet built. So, we need to emulate what it defines....
-
-  set(XROOTD_INCLUDE_DIRS ${XROOTD_ROOTDIR}/include/xrootd ${XROOTD_ROOTDIR}/include/xrootd/private)
-  set(XROOTD_NOMAIN TRUE)
-  set(XROOTD_CFLAGS "-DROOTXRDVERS=${XROOTD_VERSIONNUM}")
-  install(DIRECTORY ${XROOTD_ROOTDIR}/${XROOTD_LIBDIR}/ DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT libraries FILES_MATCHING PATTERN "libXrd*")
-  install(DIRECTORY ${XROOTD_ROOTDIR}/include/xrootd/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT headers)
-  if(APPLE)
-    # XRootD libraries on mac need the LC_RPATH variable set. The build process already takes care of setting
-    #   * BUILD_RPATH = build/XROOTD-prefix/../src
-    #   * INSTALL_RPATH = build/lib
-    # Since the install directory for the builtin_xrootd target corresponds to the build directory of the main project.
-    # Use a post install script to change the LC_RPATH variable of the libraries in the ROOT install folder.
-    install(SCRIPT ${CMAKE_CURRENT_LIST_DIR}/XROOTDApplePostInstall.cmake
-            CODE "xrootd_libs_change_rpath(${XROOTD_ROOTDIR}/${XROOTD_LIBDIR} ${CMAKE_INSTALL_FULL_LIBDIR})"
-    )
-  endif()
-  set(XROOTD_TARGET XROOTD)
+  list(APPEND ROOT_BUILTINS XROOTD)
+  add_subdirectory(builtins/xrootd)
   set(xrootd ON CACHE BOOL "Enabled because builtin_xrootd requested (${xrootd_description})" FORCE)
 endif()
-if(xrootd AND XROOTD_VERSIONNUM VERSION_GREATER 300030005)
-  set(netxng ON)
-else()
-  set(netxng OFF)
-endif()
-if(xrootd AND XROOTD_VERSIONNUM VERSION_LESS 500000000)
-  set(netx ON)
-else()
-  set(netx OFF)
-endif()
+
 if(xrootd AND XROOTD_VERSIONNUM VERSION_GREATER_EQUAL 500000000)
   if(xproofd)
     if(fail-on-missing)
@@ -1059,6 +1000,18 @@ if(xrootd AND XROOTD_VERSIONNUM VERSION_GREATER_EQUAL 500000000)
       set(xproofd OFF CACHE BOOL "Disabled because xrootd version is 5 or greater" FORCE)
     endif()
   endif()
+endif()
+
+#---check if netxng and netx can be built-------------------------------
+if(xrootd AND XROOTD_VERSIONNUM VERSION_GREATER 300030005)
+  set(netxng ON)
+else()
+  set(netxng OFF)
+endif()
+if(xrootd AND XROOTD_VERSIONNUM VERSION_LESS 500000000)
+  set(netx ON)
+else()
+  set(netx OFF)
 endif()
 
 #---Alien support----------------------------------------------------------------
@@ -1365,7 +1318,7 @@ if(builtin_tbb)
       URL_HASH SHA256=${tbb_sha256}
       INSTALL_DIR ${CMAKE_BINARY_DIR}
       CONFIGURE_COMMAND devenv.exe /useenv /upgrade build/${vsdir}/makefile.sln
-      BUILD_COMMAND devenv.exe /useenv /build "Release|${tbb_arch}" build/${vsdir}/makefile.sln
+      BUILD_COMMAND MSBuild.exe build/${vsdir}/makefile.sln /p:Configuration=Release /p:Platform=${tbb_arch}
       INSTALL_COMMAND ${CMAKE_COMMAND} -E copy_if_different build/${vsdir}/${tbb_arch}/Release/tbb.dll ${CMAKE_BINARY_DIR}/bin/
               COMMAND ${CMAKE_COMMAND} -E copy_if_different build/${vsdir}/${tbb_arch}/Release/tbbmalloc.dll ${CMAKE_BINARY_DIR}/bin/
               COMMAND ${CMAKE_COMMAND} -E copy_if_different build/${vsdir}/${tbb_arch}/Release/tbbmalloc_proxy.dll ${CMAKE_BINARY_DIR}/bin/
@@ -1942,7 +1895,7 @@ if (testing)
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_SHALLOW 1
-    GIT_TAG release-1.10.0
+    GIT_TAG release-1.11.0
     UPDATE_COMMAND ""
     # TIMEOUT 10
     # # Force separate output paths for debug and release builds to allow easy
@@ -2103,6 +2056,26 @@ if(test_distrdf_pyspark)
     if(NOT PySpark_FOUND)
       message(STATUS "Switching OFF 'test_distrdf_pyspark' option")
       set(test_distrdf_pyspark OFF CACHE BOOL "Disabled because PySpark not found" FORCE)
+    endif()
+
+  endif()
+
+endif()
+
+#------------------------------------------------------------------------------------
+# Check if the dask package is installed on the system.
+# Needed to run tests of the distributed RDataFrame module that use dask.
+if(test_distrdf_dask)
+  message(STATUS "Looking for Dask")
+
+  if(fail-on-missing)
+    find_package(Dask 2020.12 REQUIRED)
+  else()
+
+    find_package(Dask 2020.12)
+    if(NOT Dask_FOUND)
+      message(STATUS "Switching OFF 'test_distrdf_dask' option")
+      set(test_distrdf_dask OFF CACHE BOOL "Disabled because Dask not found" FORCE)
     endif()
 
   endif()

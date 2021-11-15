@@ -16,6 +16,7 @@
 
 #include <ROOT/RLogger.hxx>
 #include <ROOT/RFileDialog.hxx>
+#include <ROOT/RWebWindowsManager.hxx>
 
 #include "RBrowserWidget.hxx"
 
@@ -115,6 +116,28 @@ public:
 
 };
 
+class RBrowserCatchedWidget : public RBrowserWidget {
+public:
+
+   std::string fUrl;   // url of catched widget
+   std::string fCatchedKind;  // kind of catched widget
+
+   void Show(const std::string &) override {}
+
+   std::string GetKind() const override { return "catched"; }
+
+   std::string GetUrl() override { return fUrl; }
+
+   std::string GetTitle() override { return fCatchedKind; }
+
+   RBrowserCatchedWidget(const std::string &name, const std::string &url, const std::string &kind) :
+      RBrowserWidget(name),
+      fUrl(url),
+      fCatchedKind(kind)
+   {
+   }
+};
+
 
 /** \class ROOT::Experimental::RBrowser
 \ingroup rbrowser
@@ -147,6 +170,29 @@ RBrowser::RBrowser(bool use_rcanvas)
    fWebWindow->SetConnLimit(1); // the only connection is allowed
    fWebWindow->SetMaxQueueLength(30); // number of allowed entries in the window queue
 
+   fWebWindow->GetManager()->SetShowCallback([this](RWebWindow &win, const RWebDisplayArgs &args) -> bool {
+
+      std::string kind;
+
+      if (args.GetWidgetKind() == "RCanvas")
+         kind = "rcanvas";
+      else if (args.GetWidgetKind() == "TCanvas")
+         kind = "tcanvas";
+      else if (args.GetWidgetKind() == "REveGeomViewer")
+         kind = "geom";
+
+      if (!fWebWindow || !fCatchWindowShow || kind.empty()) return false;
+
+      std::string url = fWebWindow->GetRelativeAddr(win);
+
+      auto widget = AddCatchedWidget(url, kind);
+
+      if (widget && fWebWindow && (fWebWindow->NumConnections() > 0))
+         fWebWindow->Send(0, NewWidgetMsg(widget));
+
+      return widget ? true : false;
+   });
+
    Show();
 
    // add first canvas by default
@@ -166,6 +212,7 @@ RBrowser::RBrowser(bool use_rcanvas)
 
 RBrowser::~RBrowser()
 {
+   fWebWindow->GetManager()->SetShowCallback(nullptr);
 }
 
 
@@ -205,11 +252,17 @@ void RBrowser::ProcessSaveFile(const std::string &fname, const std::string &cont
 }
 
 /////////////////////////////////////////////////////////////////////////////////
-/// Process file save command in the editor
+/// Process run macro command in the editor
 
-long RBrowser::ProcessRunMacro(const std::string &file_path)
+void RBrowser::ProcessRunMacro(const std::string &file_path)
 {
-   return gInterpreter->ExecuteMacro(file_path.c_str());
+   if (file_path.rfind(".py") == file_path.length() - 3) {
+      TString exec;
+      exec.Form("TPython::ExecScript(\"%s\");", file_path.c_str());
+      gROOT->ProcessLine(exec.Data());
+   } else {
+      gInterpreter->ExecuteMacro(file_path.c_str());
+   }
 }
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -358,6 +411,25 @@ std::shared_ptr<RBrowserWidget> RBrowser::AddWidget(const std::string &kind)
 
    return widget;
 }
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+/// Add widget catched from external scripts
+
+std::shared_ptr<RBrowserWidget> RBrowser::AddCatchedWidget(const std::string &url, const std::string &kind)
+{
+   if (url.empty()) return nullptr;
+
+   std::string name = "catched"s + std::to_string(++fWidgetCnt);
+
+   auto widget = std::make_shared<RBrowserCatchedWidget>(name, url, kind);
+
+   fWidgets.emplace_back(widget);
+
+   fActiveWidgetName = name;
+
+   return widget;
+}
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 /// Create new widget and send init message to the client

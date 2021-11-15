@@ -100,6 +100,8 @@ private:
    std::atomic<std::uint64_t> fOid{0};
    /// \brief A URI to a DAOS pool of the form 'daos://pool-uuid:svc_replicas/container-uuid'
    std::string fURI;
+   /// Tracks the number of bytes committed to the current cluster
+   std::uint64_t fNBytesCurrentCluster{0};
 
    RDaosNTupleAnchor fNTupleAnchor;
 
@@ -108,7 +110,7 @@ protected:
    RClusterDescriptor::RLocator CommitPageImpl(ColumnHandle_t columnHandle, const RPage &page) final;
    RClusterDescriptor::RLocator CommitSealedPageImpl(DescriptorId_t columnId,
                                                      const RPageStorage::RSealedPage &sealedPage) final;
-   RClusterDescriptor::RLocator CommitClusterImpl(NTupleSize_t nEntries) final;
+   std::uint64_t CommitClusterImpl(NTupleSize_t nEntries) final;
    void CommitDatasetImpl() final;
    void WriteNTupleHeader(const void *data, size_t nbytes, size_t lenHeader);
    void WriteNTupleFooter(const void *data, size_t nbytes, size_t lenFooter);
@@ -118,7 +120,7 @@ public:
    RPageSinkDaos(std::string_view ntupleName, std::string_view uri, const RNTupleWriteOptions &options);
    virtual ~RPageSinkDaos();
 
-   RPage ReservePage(ColumnHandle_t columnHandle, std::size_t nElements = 0) final;
+   RPage ReservePage(ColumnHandle_t columnHandle, std::size_t nElements) final;
    void ReleasePage(RPage &page) final;
 };
 
@@ -181,7 +183,7 @@ public:
    void LoadSealedPage(DescriptorId_t columnId, const RClusterIndex &clusterIndex,
                        RSealedPage &sealedPage) final;
 
-   std::unique_ptr<RCluster> LoadCluster(DescriptorId_t clusterId, const ColumnSet_t &columns) final;
+   std::vector<std::unique_ptr<RCluster>> LoadClusters(std::span<RCluster::RKey> clusterKeys) final;
 
    /// Return the object class used for user data OIDs in this ntuple.
    std::string GetObjectClass() const;

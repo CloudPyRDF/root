@@ -158,6 +158,7 @@ private:
 
    std::shared_ptr<WebConn> FindOrCreateConnection(unsigned wsid, bool make_new, const char *query);
 
+   /// Find connection with specified websocket id
    std::shared_ptr<WebConn> FindConnection(unsigned wsid) { return FindOrCreateConnection(wsid, false, nullptr); }
 
    std::shared_ptr<WebConn> RemoveConnection(unsigned wsid);
@@ -204,6 +205,9 @@ public:
 
    /// Returns ID for the window - unique inside window manager
    unsigned GetId() const { return fId; }
+
+   /// Returns window manager
+   std::shared_ptr<RWebWindowsManager> GetManager() const { return fMgr; }
 
    /// Set content of default window HTML page
    /// This page returns when URL address of the window will be requested
@@ -305,6 +309,8 @@ public:
    std::string GetAddr() const;
 
    std::string GetRelativeAddr(const std::shared_ptr<RWebWindow> &win) const;
+
+   std::string GetRelativeAddr(const RWebWindow &win) const;
 
    void SetCallBacks(WebWindowConnectCallback_t conn, WebWindowDataCallback_t data, WebWindowConnectCallback_t disconn = nullptr);
 
