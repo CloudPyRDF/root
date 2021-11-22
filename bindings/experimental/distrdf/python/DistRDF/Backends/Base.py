@@ -226,7 +226,7 @@ class BaseBackend(ABC):
                 # Only other head node type is EmptySourceHeadNode at the moment
                 # Initialize an RDataFrame with number of entries requested by
                 # user, then limit processing to the entries in this range.
-                rdf = ROOT.RDataFrame(nentries).Range(current_range.start, current_range.end)
+                rdf = ROOT.RDataFrame(current_range.end - current_range.start)
 
 
             # Output of the callable
