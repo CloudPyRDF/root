@@ -48,11 +48,11 @@ class AWSServiceWrapper:
         payload = json.dumps({
             'range': self.encode_object(root_range),
             'script': script,
-            'cert': str(base64.b64encode(certs)),
-            'headers': headers
+            'cert': base64.b64encode(certs).decode(),
+            'headers': headers,
+            'S3_ACCESS_KEY': self.encode_object(os.getenv('S3_ACCESS_KEY')),
+            'S3_SECRET_KEY': self.encode_object(os.getenv('S3_SECRET_KEY')), 
         })
-
-        # Maybe here give info about number of invoked lambda for awsmonitor
 
         filename: Optional[str] = None
 
@@ -64,7 +64,6 @@ class AWSServiceWrapper:
                     InvocationType='RequestResponse',
                     Payload=bytes(payload, encoding='utf8')
                 )
-
                 payload = self.get_response_payload(response)
 
                 if 'FunctionError' in response or payload.get('statusCode') == 500:
@@ -108,10 +107,8 @@ class AWSServiceWrapper:
     @staticmethod
     def process_lambda_error(payload):
         try:
-            # Get error specification and remove additional
-            # quotas (side effect of serialization)
-            error_type = payload['errorType'][1:-1]
-            error_message = payload['errorMessage'][1:-1]
+            error_type = json.loads(payload['errorType'])
+            error_message = json.loads(payload['errorMessage'])
             exception = getattr(sys.modules['builtins'], error_type)
             msg = f"Lambda raised an exception: {error_message}"
         except Exception:
@@ -148,8 +145,8 @@ class AWSServiceWrapper:
         return param['Parameter']['Value']
 
     @staticmethod
-    def encode_object(object_to_encode) -> str:
-        return str(base64.b64encode(pickle.dumps(object_to_encode)))
+    def encode_object(obj) -> str:
+        return base64.b64encode(pickle.dumps(obj)).decode()
 
     def get_from_s3(self, filename, bucket_name, directory):
         s3_client = boto3.client('s3', region_name=self.region)
