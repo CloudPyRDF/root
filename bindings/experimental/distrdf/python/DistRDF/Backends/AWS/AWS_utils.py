@@ -51,7 +51,7 @@ class AWSServiceWrapper:
             'cert': base64.b64encode(certs).decode(),
             'headers': headers,
             'S3_ACCESS_KEY': self.encode_object(os.getenv('S3_ACCESS_KEY')),
-            'S3_SECRET_KEY': self.encode_object(os.getenv('S3_SECRET_KEY')), 
+            'S3_SECRET_KEY': self.encode_object(os.getenv('S3_SECRET_KEY')),
         })
 
         filename: Optional[str] = None
@@ -80,17 +80,9 @@ class AWSServiceWrapper:
                 f = open(f'{result_dir}/{filename}.json', "a")
                 f.write(monitoring_result)
                 f.close()
-
-            except botocore.exceptions.ClientError as error:
-                # AWS site errors
-                logger.warning(error)
-                logger.warning(error['Error']['Message'])
-            except Exception as error:
-                # All other errors
-                logger.warning(str(error) + " (" + type(error).__name__ + ")")
-            else:
-                while not self.s3_object_exists(bucket_name, filename):
-                    time.sleep(0.5)
+            except Exception as e:
+                logger.error(e)
+            finally:
                 break
 
             time.sleep(1)
@@ -107,8 +99,10 @@ class AWSServiceWrapper:
     @staticmethod
     def process_lambda_error(payload):
         try:
-            error_type = json.loads(payload['errorType'])
-            error_message = json.loads(payload['errorMessage'])
+            # Get error specification and remove additional
+            # quotas (side effect of serialization)
+            error_type = payload['errorType'][1:-1]
+            error_message = payload['errorMessage'][1:-1]
             exception = getattr(sys.modules['builtins'], error_type)
             msg = f"Lambda raised an exception: {error_message}"
         except Exception:
@@ -132,12 +126,15 @@ class AWSServiceWrapper:
         s3_bucket.objects.all().delete()
 
     def s3_object_exists(self, bucket_name, filename):
+        s3_resource = boto3.resource('s3', region_name=self.region)
         try:
-            s3_client = boto3.client('s3', region_name=self.region)
-            s3_client.head_object(Bucket=bucket_name, Key=filename)
-            return True
-        except botocore.exceptions.ClientError:
+            s3_resource.Object(bucket_name, filename).load()
+        except botocore.exceptions.ClientError as e:
+            if e.response['Error']['Code'] != "404":
+                print(e)
             return False
+        else:
+            return True
 
     def get_ssm_parameter_value(self, name):
         ssm_client = boto3.client('ssm', region_name=self.region)
@@ -145,12 +142,12 @@ class AWSServiceWrapper:
         return param['Parameter']['Value']
 
     @staticmethod
-    def encode_object(obj) -> str:
-        return base64.b64encode(pickle.dumps(obj)).decode()
+    def encode_object(object_to_encode) -> str:
+        return base64.b64encode(pickle.dumps(object_to_encode)).decode()
 
     def get_from_s3(self, filename, bucket_name, directory):
-        s3_client = boto3.client('s3', region_name=self.region)
         local_filename = os.path.join(directory, filename)
+        s3_client = boto3.client('s3', region_name=self.region)
         s3_client.download_file(bucket_name, filename, local_filename)
 
         # tfile = ROOT.TFile(local_filename, 'OPEN')

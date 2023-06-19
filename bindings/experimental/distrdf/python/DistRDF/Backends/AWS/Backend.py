@@ -33,9 +33,9 @@ class AWS(Base.BaseBackend):
         super(AWS, self).__init__()
         self.logger = FlushingLogger() if logging.root.level >= logging.INFO else logging.getLogger()
         self.npartitions = self._get_partitions()
-        self.region = region_name if region_name is not None else 'us-east-1'
         self.paths = []
-        self.aws_service_wrapper = AWSServiceWrapper(self.region)
+        self.aws_service_wrapper = AWSServiceWrapper(region_name)
+        self.processing_bucket = self.aws_service_wrapper.get_ssm_parameter_value('processing_bucket')
 
     def _get_partitions(self):
         return int(self.npartitions or AWS.MIN_NPARTITIONS)
@@ -67,7 +67,7 @@ class AWS(Base.BaseBackend):
             after computation (Map-Reduce).
         """
 
-        invoke_func, download_func, processing_bucket = self.create_init_arguments(mapper)
+        invoke_func, download_func = self.create_init_arguments(mapper)
 
         self.logger.info(f'Before lambdas invoke. Number of lambdas: {len(ranges)}')
 
@@ -75,6 +75,7 @@ class AWS(Base.BaseBackend):
 
         files = self.invoke_and_download(invoke_func, download_func, ranges)
 
+        self.logger.info(f'Lambdas finished.')
         reduce_begin = time.time()
 
         result = Reducer.tree_reduce(reducer, files)
@@ -86,7 +87,7 @@ class AWS(Base.BaseBackend):
         )
 
         # Clean up intermediate objects after we're done
-        self.aws_service_wrapper.clean_s3_bucket(processing_bucket)
+        self.aws_service_wrapper.clean_s3_bucket(self.processing_bucket)
 
         print(f"Benchmark report: {bench}")
 
@@ -99,7 +100,6 @@ class AWS(Base.BaseBackend):
 
         pickled_mapper = AWSServiceWrapper.encode_object(mapper)
         pickled_headers = AWSServiceWrapper.encode_object(self.paths)
-        processing_bucket = self.aws_service_wrapper.get_ssm_parameter_value('processing_bucket')
 
         try:
             f = open(self.TOKEN_PATH, "rb")
@@ -114,27 +114,33 @@ class AWS(Base.BaseBackend):
             script=pickled_mapper,
             certs=certs,
             headers=pickled_headers,
-            bucket_name=processing_bucket,
+            bucket_name=self.processing_bucket,
             logger=self.logger)
 
         download_partial = functools.partial(
             self.aws_service_wrapper.get_partial_result_from_s3,
-            bucket_name=processing_bucket)
+            bucket_name=self.processing_bucket)
 
-        return invoke_lambda, download_partial, processing_bucket
+        return invoke_lambda, download_partial
 
     def invoke_and_download(self, invoke, download, ranges):
-        files = []
-
-        def download_callback(future):
-            filename = future.result()
-            if filename is not None:
-                files.append(download(filename))
-
+        s3_objects = []
         with ThreadPoolExecutor(max_workers=len(ranges)) as executor:
+            futures = []
             for root_range in ranges:
-                future = executor.submit(invoke, root_range)
-                future.add_done_callback(download_callback)
+                future = executor.submit(invoke, root_range=root_range)
+                futures.append(future)
+            s3_objects = [future.result() for future in futures]
+        files = []
+        before = time.time()
+        with ThreadPoolExecutor(max_workers=min(len(s3_objects), 256)) as executor:
+            futures = []
+            for filename in s3_objects:
+                future = executor.submit(download, filename)
+                futures.append(future)
+            files = [future.result() for future in futures]
+        after = time.time()
+        print(f'download_time={after - before}')
 
         if len(files) < len(ranges):
             raise Exception(f'Some lambdas failed after multiple retrials')
