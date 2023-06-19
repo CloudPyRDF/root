@@ -4,8 +4,13 @@ import logging
 import os
 import sys
 import time
+import ctypes
+import array
 from pathlib import Path
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
+
+import ROOT
 
 import boto3
 import botocore
@@ -165,3 +170,53 @@ class AWSServiceWrapper:
         Path(local_filename).unlink()
 
         return result
+
+    @staticmethod
+    def list_all_parts(Bucket: str, Key: str, UploadId: str, **kwargs):
+        s3 = boto3.client('s3')
+
+        kwargs['Bucket'] = Bucket
+        kwargs['Key'] = Key
+        kwargs['UploadId'] = UploadId
+        kwargs['MaxParts'] = 1000
+
+        next_part = None
+        while True:
+            if next_part:
+                kwargs['PartNumberMarker'] = next_part
+            response = s3.list_parts(**kwargs)
+            yield response.get('Parts', [])
+            if not response.get('IsTruncated'):
+                break
+            next_part = response.get('NextPartNumberMarker')
+
+    def stream_cp(self, filename: str, new_filename: str, bucket: str, buff_size: int):
+        s3 = boto3.client('s3')
+
+        response = s3.create_multipart_upload(Bucket=bucket, Key=new_filename)
+        id = response['UploadId']
+        parts = []
+
+        for i, part in enumerate(stream_read_rootfile(filename, buff_size)):
+            response = s3.upload_part(Body=part, Bucket=bucket, Key=new_filename, PartNumber=i+1, UploadId=id)
+            parts.append({
+                'ETag': response['ETag'],
+                'PartNumber': i + 1,
+            })
+
+        response = s3.complete_multipart_upload(Bucket=bucket, Key=new_filename, MultipartUpload=dict(Parts=parts), UploadId=id)
+
+
+def stream_read_rootfile(filename: str, buff_size: int):
+    f = ROOT.TFile.Open(filename)
+    # Maximum number of parts per upload is 10000
+    buff_size = max(buff_size, f.GetSize() // 9999)
+    buff = array.array('b', b'\x00' * buff_size)
+    buffptr = ctypes.c_char_p(buff.buffer_info()[0])
+
+    for pos in range(0, f.GetSize(), buff_size):
+        f.ReadBuffer(buffptr, pos, buff_size)
+        yield buff.tobytes()
+
+    f.Close()
+

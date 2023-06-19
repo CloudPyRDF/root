@@ -1,6 +1,8 @@
 import logging
 import functools
 import time
+import os
+import uuid
 
 from collections import namedtuple
 
@@ -12,8 +14,11 @@ from .flushing_logger import FlushingLogger
 from .AWS_utils import AWSServiceWrapper
 from .reducer import Reducer
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 AWSBENCH = namedtuple("AWSBENCH", ["npartitions", "mapwalltime", "reducewalltime"])
+MB = 1024 ** 2
+
 
 class AWS(Base.BaseBackend):
     """
@@ -24,6 +29,8 @@ class AWS(Base.BaseBackend):
     MIN_NPARTITIONS = 8
     npartitions = 32
     TOKEN_PATH = '/tmp/certs'
+    REPLICATION_NAMESPACE = uuid.UUID('98f862dd-1fab-5adf-8638-7f5a665bad8c')
+    REPLICATE_BUFFSIZE = 100 * MB
 
     def __init__(self, region_name):
         """
@@ -52,7 +59,54 @@ class AWS(Base.BaseBackend):
         # 3. Set `npartitions` to 2
         npartitions = kwargs.pop("npartitions", self.optimize_npartitions())
         headnode = HeadNode.get_headnode(npartitions, *args)
+        if kwargs.pop('replicate', False):
+            headnode = self.replicated_headnode(headnode)
         return DataFrame.RDataFrame(headnode, self)
+
+    def replicated_headnode(self, headnode: HeadNode):
+        if not hasattr(headnode, 'tree'):
+            raise ValueError('No file to replicate')
+
+        files = [f.GetTitle() for f in headnode.tree.GetListOfFiles()]
+        newfiles = self.replicate_files(files, self.REPLICATE_BUFFSIZE)
+
+        args = [
+            headnode.npartitions,
+            headnode.tree.GetName(),
+            newfiles,
+        ]
+        if headnode.defaultbranches:
+            args.append(headnode.defaultbranches)
+
+        return HeadNode.get_headnode(*args)
+
+    def replicate_files(self, files: list[str], buff_size):
+        newfiles = []
+
+        for filename in files:
+            parsed = urlparse(filename)
+
+            if parsed.scheme == 's3':
+                newfiles.append(filename)
+                continue
+
+            new_filename = self.get_replicated_filename(parsed.path)
+            newurl = f's3://{self.processing_bucket}.s3.{self.aws_service_wrapper.region}.amazonaws.com/{new_filename}'
+            if self.aws_service_wrapper.s3_object_exists(self.processing_bucket, new_filename):
+                newfiles.append(newurl)
+                continue
+
+            self.aws_service_wrapper.stream_cp(filename, new_filename, self.processing_bucket, buff_size)
+
+            newfiles.append(newurl)
+
+        return newfiles
+
+    def get_replicated_filename(self, path: str, prefix='input'):
+        hashed_path = uuid.uuid5(self.REPLICATION_NAMESPACE, path)
+        basename = os.path.basename(path)
+        name = f'{str(hashed_path)}__{basename}'
+        return '/'.join([prefix, name])
 
     def ProcessAndMerge(self, ranges, mapper, reducer):
         """
@@ -87,7 +141,7 @@ class AWS(Base.BaseBackend):
         )
 
         # Clean up intermediate objects after we're done
-        self.aws_service_wrapper.clean_s3_bucket(self.processing_bucket)
+        # self.aws_service_wrapper.clean_s3_bucket(self.processing_bucket)
 
         print(f"Benchmark report: {bench}")
 
@@ -165,3 +219,4 @@ class AWS(Base.BaseBackend):
         with open(path, 'r') as f:
             contents = f.read()
             self.paths.append((path, contents))
+
