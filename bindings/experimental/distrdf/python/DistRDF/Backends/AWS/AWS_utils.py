@@ -28,7 +28,6 @@ class AWSServiceWrapper:
                            script,
                            certs,
                            headers,
-                           bucket_name,
                            logger=logging.getLogger()
                            ) -> Optional[str]:
         """
@@ -65,7 +64,7 @@ class AWSServiceWrapper:
             trials -= 1
             try:
                 response = client.invoke(
-                    FunctionName='root_lambda',
+                    FunctionName='worker_root_lambda',
                     InvocationType='RequestResponse',
                     Payload=bytes(payload, encoding='utf8')
                 )
@@ -82,9 +81,9 @@ class AWSServiceWrapper:
                 result_dir = path + "/results"
                 if not os.path.exists(result_dir):
                     os.makedirs(result_dir)
-                f = open(f'{result_dir}/{filename}.json', "a")
-                f.write(monitoring_result)
-                f.close()
+
+                with open(f'{result_dir}/{os.path.basename(filename)}.json', 'a') as f:
+                    f.write(monitoring_result)
             except Exception as e:
                 logger.error(e)
             finally:
@@ -93,6 +92,36 @@ class AWSServiceWrapper:
             time.sleep(1)
 
         return filename
+
+    def invoke_replicate_lambda(self,
+                           ranges,
+                           certs,
+                           logger=logging.getLogger()
+                           ) -> Optional[str]:
+
+        config = botocore.config.Config(retries={'total_max_attempts': 1},
+                                        read_timeout=900,
+                                        connect_timeout=900
+                                        )
+        client = boto3.client('lambda', region_name=self.region, config=config)
+
+        payload = json.dumps({
+            'ranges': self.encode_object(ranges),
+            'cert': base64.b64encode(certs).decode(),
+        })
+
+        try:
+            response = client.invoke(
+                FunctionName='replicator_root_lambda',
+                InvocationType='RequestResponse',
+                Payload=bytes(payload, encoding='utf8')
+            )
+            payload = self.get_response_payload(response)
+
+            if 'FunctionError' in response:
+                raise Exception(payload)
+        except Exception as e:
+            logger.error(e)
 
     @staticmethod
     def get_response_payload(response):
@@ -129,6 +158,11 @@ class AWSServiceWrapper:
         s3_resource = boto3.resource('s3', region_name=self.region)
         s3_bucket = s3_resource.Bucket(name=bucket_name)
         s3_bucket.objects.all().delete()
+
+    def clean_s3_prefix(self, bucket_name, prefix):
+        s3_resource = boto3.resource('s3', region_name=self.region)
+        s3_bucket = s3_resource.Bucket(name=bucket_name)
+        s3_bucket.objects.all().filter(Prefix=prefix).delete()
 
     def s3_object_exists(self, bucket_name, filename):
         s3_resource = boto3.resource('s3', region_name=self.region)
@@ -180,19 +214,23 @@ class AWSServiceWrapper:
         kwargs['UploadId'] = UploadId
         kwargs['MaxParts'] = 1000
 
+        parts = []
+
         next_part = None
         while True:
             if next_part:
                 kwargs['PartNumberMarker'] = next_part
             response = s3.list_parts(**kwargs)
-            yield response.get('Parts', [])
+            parts.extend(response.get('Parts', []))
             if not response.get('IsTruncated'):
                 break
             next_part = response.get('NextPartNumberMarker')
+        
+        return parts
 
     def stream_cp(self, filename: str, new_filename: str, bucket: str, buff_size: int):
         s3 = boto3.client('s3')
-
+        
         response = s3.create_multipart_upload(Bucket=bucket, Key=new_filename)
         id = response['UploadId']
         parts = []
@@ -206,6 +244,14 @@ class AWSServiceWrapper:
 
         response = s3.complete_multipart_upload(Bucket=bucket, Key=new_filename, MultipartUpload=dict(Parts=parts), UploadId=id)
 
+    def start_multipart_upload(self, bucket: str, filename: str):
+        s3 = boto3.client('s3')
+        response = s3.create_multipart_upload(Bucket=bucket, Key=filename)
+        return response['UploadId']
+
+    def finish_multipart_upload(self, bucket, filename, parts, uid):
+        s3 = boto3.client('s3')
+        s3.complete_multipart_upload(Bucket=bucket, Key=filename, MultipartUpload=dict(Parts=parts), UploadId=uid)
 
 def stream_read_rootfile(filename: str, buff_size: int):
     f = ROOT.TFile.Open(filename)
@@ -220,3 +266,8 @@ def stream_read_rootfile(filename: str, buff_size: int):
 
     f.Close()
 
+def root_file_size(filename: str):
+    f = ROOT.TFile.Open(filename)
+    size = f.GetSize()
+    f.Close()
+    return size

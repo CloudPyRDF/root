@@ -1,8 +1,6 @@
 import logging
 import functools
 import time
-import os
-import uuid
 
 from collections import namedtuple
 
@@ -12,12 +10,14 @@ from DistRDF.Backends import Base
 
 from .flushing_logger import FlushingLogger
 from .AWS_utils import AWSServiceWrapper
+from .krbcert import KRBCert
 from .reducer import Reducer
+from .replicator import Replicator
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlparse
+
+import ROOT
 
 AWSBENCH = namedtuple("AWSBENCH", ["npartitions", "mapwalltime", "reducewalltime"])
-MB = 1024 ** 2
 
 
 class AWS(Base.BaseBackend):
@@ -28,9 +28,6 @@ class AWS(Base.BaseBackend):
 
     MIN_NPARTITIONS = 8
     npartitions = 32
-    TOKEN_PATH = '/tmp/certs'
-    REPLICATION_NAMESPACE = uuid.UUID('98f862dd-1fab-5adf-8638-7f5a665bad8c')
-    REPLICATE_BUFFSIZE = 100 * MB
 
     def __init__(self, region_name):
         """
@@ -41,6 +38,7 @@ class AWS(Base.BaseBackend):
         self.logger = FlushingLogger() if logging.root.level >= logging.INFO else logging.getLogger()
         self.npartitions = self._get_partitions()
         self.paths = []
+        self.cert = KRBCert()
         self.aws_service_wrapper = AWSServiceWrapper(region_name)
         self.processing_bucket = self.aws_service_wrapper.get_ssm_parameter_value('processing_bucket')
 
@@ -61,6 +59,7 @@ class AWS(Base.BaseBackend):
         headnode = HeadNode.get_headnode(npartitions, *args)
         if kwargs.pop('replicate', False):
             headnode = self.replicated_headnode(headnode)
+
         return DataFrame.RDataFrame(headnode, self)
 
     def replicated_headnode(self, headnode: HeadNode):
@@ -68,7 +67,8 @@ class AWS(Base.BaseBackend):
             raise ValueError('No file to replicate')
 
         files = [f.GetTitle() for f in headnode.tree.GetListOfFiles()]
-        newfiles = self.replicate_files(files, self.REPLICATE_BUFFSIZE)
+        replicator = Replicator(self.processing_bucket, self.aws_service_wrapper.region, lambdas_count=16)
+        newfiles = replicator.replicate(files)
 
         args = [
             headnode.npartitions,
@@ -79,34 +79,6 @@ class AWS(Base.BaseBackend):
             args.append(headnode.defaultbranches)
 
         return HeadNode.get_headnode(*args)
-
-    def replicate_files(self, files: list[str], buff_size):
-        newfiles = []
-
-        for filename in files:
-            parsed = urlparse(filename)
-
-            if parsed.scheme == 's3':
-                newfiles.append(filename)
-                continue
-
-            new_filename = self.get_replicated_filename(parsed.path)
-            newurl = f's3://{self.processing_bucket}.s3.{self.aws_service_wrapper.region}.amazonaws.com/{new_filename}'
-            if self.aws_service_wrapper.s3_object_exists(self.processing_bucket, new_filename):
-                newfiles.append(newurl)
-                continue
-
-            self.aws_service_wrapper.stream_cp(filename, new_filename, self.processing_bucket, buff_size)
-
-            newfiles.append(newurl)
-
-        return newfiles
-
-    def get_replicated_filename(self, path: str, prefix='input'):
-        hashed_path = uuid.uuid5(self.REPLICATION_NAMESPACE, path)
-        basename = os.path.basename(path)
-        name = f'{str(hashed_path)}__{basename}'
-        return '/'.join([prefix, name])
 
     def ProcessAndMerge(self, ranges, mapper, reducer):
         """
@@ -141,7 +113,7 @@ class AWS(Base.BaseBackend):
         )
 
         # Clean up intermediate objects after we're done
-        # self.aws_service_wrapper.clean_s3_bucket(self.processing_bucket)
+        self.aws_service_wrapper.clean_s3_prefix(self.processing_bucket, 'output')
 
         print(f"Benchmark report: {bench}")
 
@@ -155,20 +127,11 @@ class AWS(Base.BaseBackend):
         pickled_mapper = AWSServiceWrapper.encode_object(mapper)
         pickled_headers = AWSServiceWrapper.encode_object(self.paths)
 
-        try:
-            f = open(self.TOKEN_PATH, "rb")
-            certs = f.read()
-        except FileNotFoundError:
-            print("No certificate was found. Make sure to write the appropriate certificate in the path "
-                  f"'{self.TOKEN_PATH}'. Disregard this message if you are not reading restricted-access data.")
-            certs = b''
-
         invoke_lambda = functools.partial(
             self.aws_service_wrapper.invoke_root_lambda,
             script=pickled_mapper,
-            certs=certs,
+            certs=self.cert.bytes,
             headers=pickled_headers,
-            bucket_name=self.processing_bucket,
             logger=self.logger)
 
         download_partial = functools.partial(
@@ -219,4 +182,3 @@ class AWS(Base.BaseBackend):
         with open(path, 'r') as f:
             contents = f.read()
             self.paths.append((path, contents))
-
