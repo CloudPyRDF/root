@@ -1,6 +1,7 @@
 import logging
 import functools
 import time
+import uuid
 
 from collections import namedtuple
 
@@ -39,8 +40,8 @@ class AWS(Base.BaseBackend):
         self.npartitions = self._get_partitions()
         self.paths = []
         self.cert = KRBCert()
-        self.aws_service_wrapper = AWSServiceWrapper(region_name)
-        self.processing_bucket = self.aws_service_wrapper.get_ssm_parameter_value('processing_bucket')
+        self.aws = AWSServiceWrapper(region_name)
+        self.processing_bucket = self.aws.get_ssm_parameter_value('processing_bucket')
 
     def _get_partitions(self):
         return int(self.npartitions or AWS.MIN_NPARTITIONS)
@@ -58,6 +59,9 @@ class AWS(Base.BaseBackend):
         npartitions = kwargs.pop("npartitions", self.optimize_npartitions())
         headnode = HeadNode.get_headnode(npartitions, *args)
         if kwargs.pop('replicate', False):
+            # Stop annoying messages that flood the screen when
+            # printed by multiple threads
+            ROOT.gErrorIgnoreLevel = ROOT.kWarning
             headnode = self.replicated_headnode(headnode)
 
         return DataFrame.RDataFrame(headnode, self)
@@ -67,7 +71,7 @@ class AWS(Base.BaseBackend):
             raise ValueError('No file to replicate')
 
         files = [f.GetTitle() for f in headnode.tree.GetListOfFiles()]
-        replicator = Replicator(self.processing_bucket, self.aws_service_wrapper.region, lambdas_count=16)
+        replicator = Replicator(self.processing_bucket, self.aws.region, lambdas_count=16)
         newfiles = replicator.replicate(files)
 
         args = [
@@ -93,76 +97,99 @@ class AWS(Base.BaseBackend):
             after computation (Map-Reduce).
         """
 
-        invoke_func, download_func = self.create_init_arguments(mapper)
+        prefix = str(uuid.uuid1())
+        lambdas_count = len(ranges)
 
-        self.logger.info(f'Before lambdas invoke. Number of lambdas: {len(ranges)}')
+        invoke_worker, invoke_reducer = self.create_init_arguments(
+            mapper,
+            reducer,
+            lambdas_count,
+            prefix
+        )
+
+        self.logger.info(f'Before lambdas invoke. Number of lambdas: {lambdas_count}')
 
         invoke_begin = time.time()
 
-        files = self.invoke_and_download(invoke_func, download_func, ranges)
+        self.work(invoke_worker, ranges)
 
-        self.logger.info(f'Lambdas finished.')
+        self.logger.info(f'All lambdas invoked.')
+
+        self.wait_for_first_results(prefix)
+
+        self.logger.info(f'Starting reduction.')
+
         reduce_begin = time.time()
 
-        result = Reducer.tree_reduce(reducer, files)
+        filename = self.reduce(invoke_reducer)
+
+        reduce_end = time.time()
+
+        result = self.download(filename)
 
         bench = AWSBENCH(
             len(ranges),
             round(reduce_begin - invoke_begin, 4),
-            round(time.time() - reduce_begin, 4)
+            round(reduce_end - reduce_begin, 4)
         )
 
         # Clean up intermediate objects after we're done
-        self.aws_service_wrapper.clean_s3_prefix(self.processing_bucket, 'output')
+        self.aws.clean_s3_prefix(self.processing_bucket, f'output/{prefix}')
 
         print(f"Benchmark report: {bench}")
 
         return result
 
-    def create_init_arguments(self, mapper):
+    def create_init_arguments(self, mapper, reducer, lambdas_count, prefix):
         """
         Create init arguments for ProcessAndMerge method.
         """
 
-        pickled_mapper = AWSServiceWrapper.encode_object(mapper)
-        pickled_headers = AWSServiceWrapper.encode_object(self.paths)
+        encoded_mapper = AWSServiceWrapper.encode_object(mapper)
+        encoded_headers = AWSServiceWrapper.encode_object(self.paths)
+        encoded_reducer = AWSServiceWrapper.encode_object(reducer)
+        encoded_prefix = AWSServiceWrapper.encode_object(prefix)
+        encoded_lambdas_count = AWSServiceWrapper.encode_object(lambdas_count)
 
-        invoke_lambda = functools.partial(
-            self.aws_service_wrapper.invoke_root_lambda,
-            script=pickled_mapper,
+        invoke_worker = functools.partial(
+            self.aws.invoke_worker_lambda,
+            script=encoded_mapper,
             certs=self.cert.bytes,
-            headers=pickled_headers,
-            logger=self.logger)
+            headers=encoded_headers,
+            prefix=encoded_prefix,
+            logger=self.logger
+        )
 
-        download_partial = functools.partial(
-            self.aws_service_wrapper.get_partial_result_from_s3,
-            bucket_name=self.processing_bucket)
+        invoke_reducer = functools.partial(
+            self.aws.invoke_reduce_lambda,
+            reducer=encoded_reducer,
+            file_count=encoded_lambdas_count,
+            prefix=encoded_prefix,
+        )
 
-        return invoke_lambda, download_partial
+        return invoke_worker, invoke_reducer
 
-    def invoke_and_download(self, invoke, download, ranges):
-        s3_objects = []
+    def work(self, invoke_worker, ranges):
         with ThreadPoolExecutor(max_workers=len(ranges)) as executor:
             futures = []
             for root_range in ranges:
-                future = executor.submit(invoke, root_range=root_range)
+                future = executor.submit(invoke_worker, root_range=root_range)
                 futures.append(future)
-            s3_objects = [future.result() for future in futures]
-        files = []
-        before = time.time()
-        with ThreadPoolExecutor(max_workers=min(len(s3_objects), 256)) as executor:
-            futures = []
-            for filename in s3_objects:
-                future = executor.submit(download, filename)
-                futures.append(future)
-            files = [future.result() for future in futures]
-        after = time.time()
-        print(f'download_time={after - before}')
+            self.wait_on_futures(futures)
 
-        if len(files) < len(ranges):
-            raise Exception(f'Some lambdas failed after multiple retrials')
+    def wait_for_first_results(self, prefix):
+        while self.aws.s3_is_empty(self.processing_bucket, f'output/{prefix}'):
+            time.sleep(1)
 
-        return files
+    def reduce(self, invoke_reducer):
+        return invoke_reducer()
+
+    def download(self, filename):
+        return self.aws.get_and_deserialize_object_from_s3(filename, self.processing_bucket)
+
+    @staticmethod
+    def wait_on_futures(futures):
+        _ = [future.result() for future in futures]
 
     def distribute_unique_paths(self, paths):
         """

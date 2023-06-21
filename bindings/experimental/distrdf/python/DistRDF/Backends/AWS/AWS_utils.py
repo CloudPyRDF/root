@@ -23,11 +23,12 @@ class AWSServiceWrapper:
     def __init__(self, region):
         self.region = region
 
-    def invoke_root_lambda(self,
+    def invoke_worker_lambda(self,
                            root_range,
                            script,
                            certs,
                            headers,
+                           prefix,
                            logger=logging.getLogger()
                            ) -> Optional[str]:
         """
@@ -42,7 +43,6 @@ class AWSServiceWrapper:
                 has failed.
         """
 
-        trials = self.INVOCATION_RETRIALS_COUNT
         config = botocore.config.Config(retries={'total_max_attempts': 1},
                                         read_timeout=900,
                                         connect_timeout=900
@@ -54,44 +54,16 @@ class AWSServiceWrapper:
             'script': script,
             'cert': base64.b64encode(certs).decode(),
             'headers': headers,
+            'prefix': prefix,
             'S3_ACCESS_KEY': self.encode_object(os.getenv('S3_ACCESS_KEY')),
             'S3_SECRET_KEY': self.encode_object(os.getenv('S3_SECRET_KEY')),
         })
 
-        filename: Optional[str] = None
-
-        while trials > 0:
-            trials -= 1
-            try:
-                response = client.invoke(
-                    FunctionName='worker_root_lambda',
-                    InvocationType='RequestResponse',
-                    Payload=bytes(payload, encoding='utf8')
-                )
-                payload = self.get_response_payload(response)
-
-                if 'FunctionError' in response or payload.get('statusCode') == 500:
-                    exception, msg = self.process_lambda_error(payload)
-                    raise exception(msg)
-
-                filename = json.loads(payload.get('filename', 'null'))
-                monitoring_result = payload.get('body', 'null')
-
-                path = os.getcwd()
-                result_dir = path + "/results"
-                if not os.path.exists(result_dir):
-                    os.makedirs(result_dir)
-
-                with open(f'{result_dir}/{os.path.basename(filename)}.json', 'a') as f:
-                    f.write(monitoring_result)
-            except Exception as e:
-                logger.error(e)
-            finally:
-                break
-
-            time.sleep(1)
-
-        return filename
+        client.invoke(
+            FunctionName='worker_root_lambda',
+            InvocationType='Event',
+            Payload=bytes(payload, encoding='utf8')
+        )
 
     def invoke_replicate_lambda(self,
                            ranges,
@@ -123,6 +95,44 @@ class AWSServiceWrapper:
         except Exception as e:
             logger.error(e)
 
+    def invoke_reduce_lambda(self,
+                           reducer,
+                           file_count,
+                           prefix,
+                           logger=logging.getLogger()
+                           ) -> Optional[str]:
+
+        config = botocore.config.Config(retries={'total_max_attempts': 1},
+                                        read_timeout=900,
+                                        connect_timeout=900
+                                        )
+        client = boto3.client('lambda', region_name=self.region, config=config)
+
+        payload = json.dumps({
+            'reducer': reducer,
+            'filesno': file_count,
+            'prefix': prefix,
+        })
+
+        try:
+            response = client.invoke(
+                FunctionName='reducer_root_lambda',
+                InvocationType='RequestResponse',
+                Payload=bytes(payload, encoding='utf8')
+            )
+            payload = self.get_response_payload(response)
+
+            if 'FunctionError' in response or payload.get('statusCode') == 500:
+                exception, msg = self.process_lambda_error(payload)
+                raise exception(msg)
+
+            filename = json.loads(payload.get('filename', 'null'))
+
+        except Exception as e:
+            logger.error(e)
+
+        return filename
+
     @staticmethod
     def get_response_payload(response):
         try:
@@ -145,12 +155,12 @@ class AWSServiceWrapper:
                    f"message={payload['errorMessage']})")
         return exception, msg
 
-    def get_partial_result_from_s3(self, filename, bucket_name):
+    def get_and_deserialize_object_from_s3(self, filename, bucket_name):
         pickled_file = self.get_file_content_from_s3(filename, bucket_name)
         return pickle.loads(pickled_file)
 
     def get_file_content_from_s3(self, filename, bucket_name):
-        s3_client = boto3.client('s3', region_name=self.region)
+        s3_client = boto3.client('s3')
         response = s3_client.get_object(Bucket=bucket_name, Key=filename)
         return response['Body'].read()
 
@@ -163,6 +173,11 @@ class AWSServiceWrapper:
         s3_resource = boto3.resource('s3', region_name=self.region)
         s3_bucket = s3_resource.Bucket(name=bucket_name)
         s3_bucket.objects.all().filter(Prefix=prefix).delete()
+
+    def s3_is_empty(self, bucket_name, prefix):
+        s3_resource = boto3.resource('s3')
+        s3_bucket = s3_resource.Bucket(name=bucket_name)
+        return len(list(s3_bucket.objects.all().filter(Prefix=prefix))) == 0
 
     def s3_object_exists(self, bucket_name, filename):
         s3_resource = boto3.resource('s3', region_name=self.region)
@@ -225,12 +240,12 @@ class AWSServiceWrapper:
             if not response.get('IsTruncated'):
                 break
             next_part = response.get('NextPartNumberMarker')
-        
+
         return parts
 
     def stream_cp(self, filename: str, new_filename: str, bucket: str, buff_size: int):
         s3 = boto3.client('s3')
-        
+
         response = s3.create_multipart_upload(Bucket=bucket, Key=new_filename)
         id = response['UploadId']
         parts = []
