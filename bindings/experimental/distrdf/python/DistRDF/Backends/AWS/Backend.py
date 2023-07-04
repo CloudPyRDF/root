@@ -100,32 +100,30 @@ class AWS(Base.BaseBackend):
         prefix = str(uuid.uuid1())
         lambdas_count = len(ranges)
 
-        invoke_worker, invoke_reducer = self.create_init_arguments(
+        invoke_worker = self.create_init_arguments(
             mapper,
-            reducer,
             lambdas_count,
             prefix
         )
-
+        self.aws.serialize_and_upload_to_s3(self.processing_bucket, reducer, f'output/{prefix}/reducer')
         self.logger.info(f'Before lambdas invoke. Number of lambdas: {lambdas_count}')
 
         invoke_begin = time.time()
 
         self.work(invoke_worker, ranges)
 
-        self.logger.info(f'All lambdas invoked.')
+        self.logger.info(f'Lambdas finished.')
 
-        self.wait_for_first_results(prefix)
-
-        self.logger.info(f'Starting reduction.')
 
         reduce_begin = time.time()
 
-        filename = self.reduce(invoke_reducer)
+        filename = f'output/{prefix}/final'
+        self.aws.s3_wait_for_file(self.processing_bucket, filename)
 
-        reduce_end = time.time()
-
+        download_begin = time.time()
         result = self.download(filename)
+        download_time = time.time() - download_begin
+        reduce_end = time.time()
 
         bench = AWSBENCH(
             len(ranges),
@@ -140,14 +138,13 @@ class AWS(Base.BaseBackend):
 
         return result
 
-    def create_init_arguments(self, mapper, reducer, lambdas_count, prefix):
+    def create_init_arguments(self, mapper, lambdas_count, prefix):
         """
         Create init arguments for ProcessAndMerge method.
         """
 
         encoded_mapper = AWSServiceWrapper.encode_object(mapper)
         encoded_headers = AWSServiceWrapper.encode_object(self.paths)
-        encoded_reducer = AWSServiceWrapper.encode_object(reducer)
         encoded_prefix = AWSServiceWrapper.encode_object(prefix)
         encoded_lambdas_count = AWSServiceWrapper.encode_object(lambdas_count)
 
@@ -157,17 +154,11 @@ class AWS(Base.BaseBackend):
             certs=self.cert.bytes,
             headers=encoded_headers,
             prefix=encoded_prefix,
+            file_count=encoded_lambdas_count,
             logger=self.logger
         )
 
-        invoke_reducer = functools.partial(
-            self.aws.invoke_reduce_lambda,
-            reducer=encoded_reducer,
-            file_count=encoded_lambdas_count,
-            prefix=encoded_prefix,
-        )
-
-        return invoke_worker, invoke_reducer
+        return invoke_worker
 
     def work(self, invoke_worker, ranges):
         with ThreadPoolExecutor(max_workers=len(ranges)) as executor:
@@ -175,7 +166,7 @@ class AWS(Base.BaseBackend):
             for root_range in ranges:
                 future = executor.submit(invoke_worker, root_range=root_range)
                 futures.append(future)
-            self.wait_on_futures(futures)
+            return self.wait_on_futures(futures)
 
     def wait_for_first_results(self, prefix):
         while self.aws.s3_is_empty(self.processing_bucket, f'output/{prefix}'):
@@ -189,7 +180,7 @@ class AWS(Base.BaseBackend):
 
     @staticmethod
     def wait_on_futures(futures):
-        _ = [future.result() for future in futures]
+        return [future.result() for future in futures]
 
     def distribute_unique_paths(self, paths):
         """

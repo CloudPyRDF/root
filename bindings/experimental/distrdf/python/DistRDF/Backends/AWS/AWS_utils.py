@@ -29,6 +29,7 @@ class AWSServiceWrapper:
                            certs,
                            headers,
                            prefix,
+                           file_count,
                            logger=logging.getLogger()
                            ) -> Optional[str]:
         """
@@ -55,15 +56,27 @@ class AWSServiceWrapper:
             'cert': base64.b64encode(certs).decode(),
             'headers': headers,
             'prefix': prefix,
+            'file_count': file_count,
             'S3_ACCESS_KEY': self.encode_object(os.getenv('S3_ACCESS_KEY')),
             'S3_SECRET_KEY': self.encode_object(os.getenv('S3_SECRET_KEY')),
         })
 
-        client.invoke(
-            FunctionName='worker_root_lambda',
-            InvocationType='Event',
-            Payload=bytes(payload, encoding='utf8')
-        )
+        filename: Optional[str] = None
+
+        try:
+            response = client.invoke(
+                FunctionName='worker_root_lambda',
+                InvocationType='RequestResponse',
+                Payload=bytes(payload, encoding='utf8')
+            )
+            payload = self.get_response_payload(response)
+
+            if 'FunctionError' in response or payload.get('statusCode') == 500:
+                exception, msg = self.process_lambda_error(payload)
+                raise exception(msg)
+
+        except Exception as e:
+            logger.error(e)
 
     def invoke_replicate_lambda(self,
                            ranges,
@@ -164,6 +177,14 @@ class AWSServiceWrapper:
         response = s3_client.get_object(Bucket=bucket_name, Key=filename)
         return response['Body'].read()
 
+    def serialize_and_upload_to_s3(self, bucket, content, filename):
+        pickled = pickle.dumps(content)
+        self.upload_to_s3(bucket, pickled, filename)
+
+    def upload_to_s3(self, bucket, content, filename):
+        s3_client = boto3.client('s3')
+        s3_client.put_object(Body=content, Bucket=bucket, Key=filename)
+
     def clean_s3_bucket(self, bucket_name):
         s3_resource = boto3.resource('s3', region_name=self.region)
         s3_bucket = s3_resource.Bucket(name=bucket_name)
@@ -190,6 +211,17 @@ class AWSServiceWrapper:
         else:
             return True
 
+    def s3_wait_for_file(self, bucket, filename):
+        client = boto3.client('s3')
+        while True:
+            try:
+                response = client.head_object(Bucket=bucket, Key=filename)
+            except botocore.exceptions.ClientError:
+                pass
+            else:
+                break
+            time.sleep(1)
+        
     def get_ssm_parameter_value(self, name):
         ssm_client = boto3.client('ssm', region_name=self.region)
         param = ssm_client.get_parameter(Name=name)
